@@ -1,0 +1,108 @@
+/* Hallmark · app-scope: 抽獎轉盤 (tool UI — macrostructure / nav / footer / hero skipped)
+ * genre: atmospheric (dark stage for projection) · tone: festive, trustworthy
+ * theme: custom "紅包" — paper oklch(16.5% 0.016 32) · accent gold oklch(82% 0.135 84) · signal red oklch(63% 0.22 27)
+ * type: system CJK sans (offline-first — no web fonts at the venue) + system mono as the evidence-data register
+ * axes: paper-band dark / display rounded-cjk-sans / accent warm
+ */
+:root {
+  color-scheme: dark;
+
+  /* Surfaces — warm near-black, lighter = higher */
+  --color-paper:   oklch(16.5% 0.016 32);
+  --color-paper-1: oklch(18.5% 0.017 32);
+  --color-paper-2: oklch(20% 0.018 32);
+  --color-paper-3: oklch(24.5% 0.02 32);
+  --color-paper-4: oklch(29% 0.022 32);
+  --color-rule:    oklch(31% 0.018 32);
+  --color-rule-2:  oklch(40% 0.02 32);
+
+  /* Ink */
+  --color-ink:   oklch(94% 0.012 80);
+  --color-ink-2: oklch(81% 0.014 70);
+  --color-ink-3: oklch(68% 0.014 60);
+
+  /* Accent — gold, used for the primary action, focus and "current" markers only */
+  --color-accent:       oklch(82% 0.135 84);
+  --color-accent-hover: oklch(86% 0.12 88);
+  --color-accent-press: oklch(76% 0.14 80);
+  --color-accent-ink:   oklch(24% 0.04 60);
+  --color-accent-deep:  oklch(31% 0.05 70);
+  --color-focus:        oklch(88% 0.11 92);
+
+  /* Signals */
+  --color-rec:         oklch(63% 0.22 27);
+  --color-danger:      oklch(50% 0.19 27);
+  --color-danger-hover: oklch(55% 0.19 27);
+  --color-danger-ink:  oklch(96% 0.012 40);
+  --color-danger-text: oklch(73% 0.15 27);
+  --color-ok:          oklch(78% 0.13 150);
+
+  /* Overlay modifiers (not palette colours) */
+  --color-scrim: oklch(10% 0.01 32 / 0.74);
+  --shadow-pop:  0 16px 40px -16px oklch(6% 0.01 32 / 0.9);
+
+  /* Stage — read by js/stage.js and painted onto the recorded canvas */
+  --stage-bg:     oklch(15% 0.02 28);
+  --stage-bloom:  oklch(33% 0.09 30);
+  --stage-band:   oklch(11.5% 0.016 28);
+  --stage-ink:    oklch(95% 0.012 80);
+  --stage-ink-2:  oklch(81% 0.02 70);
+  --stage-ink-3:  oklch(64% 0.02 50);
+  --stage-accent: oklch(84% 0.14 85);
+  --stage-rec:    oklch(63% 0.22 27);
+  --seg-1:        oklch(55% 0.19 29);   /* 朱紅 */
+  --seg-2:        oklch(94% 0.03 85);   /* 米白 */
+  --seg-3:        oklch(35% 0.11 22);   /* 酒紅 */
+  --seg-4:        oklch(81% 0.13 82);   /* 金 */
+  --seg-ink-light: oklch(97% 0.012 85);
+  --seg-ink-dark:  oklch(25% 0.05 30);
+  --seg-empty:    oklch(25% 0.02 30);
+  --rim:          oklch(74% 0.12 80);
+  --rim-shade:    oklch(47% 0.09 60);
+  --bulb-on:      oklch(97% 0.06 95);
+  --bulb-off:     oklch(50% 0.07 65);
+  --hub:          oklch(21% 0.03 30);
+  --pointer:      oklch(87% 0.13 88);
+  --pointer-edge: oklch(28% 0.07 30);
+
+  /* Type */
+  --font-body: "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", "Heiti TC", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --text-xs:   0.75rem;
+  --text-sm:   0.8125rem;
+  --text-base: 1rem;
+  --text-md:   1.25rem;
+  --text-lg:   1.5625rem;
+
+  /* Space — 4pt scale */
+  --space-3xs: 0.125rem;
+  --space-2xs: 0.25rem;
+  --space-xs:  0.5rem;
+  --space-sm:  0.75rem;
+  --space-md:  1rem;
+  --space-lg:  1.5rem;
+  --space-xl:  2.5rem;
+  --space-2xl: 4rem;
+
+  /* Shape */
+  --radius-sm:   6px;
+  --radius-md:   10px;
+  --radius-pill: 999px;
+  --control-h:   2.5rem;
+  --panel-w:     26.5rem;
+
+  /* Motion */
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in:     cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 120ms;
+  --dur-short: 220ms;
+  --dur-long:  420ms;
+
+  /* Layers */
+  --z-base:   1;
+  --z-raised: 10;
+  --z-sticky: 200;
+  --z-modal:  400;
+  --z-toast:  500;
+}

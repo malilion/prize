@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>抽獎轉盤</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%23c9a13b'/%3E%3Cpath d='M32 32 32 5A27 27 0 0 1 59 32Z' fill='%23b8312f'/%3E%3Cpath d='M32 32 59 32A27 27 0 0 1 32 59Z' fill='%23f3ead8'/%3E%3Cpath d='M32 32 32 59A27 27 0 0 1 5 32Z' fill='%236d1d1c'/%3E%3Cpath d='M32 32 5 32A27 27 0 0 1 32 5Z' fill='%23e3b555'/%3E%3Ccircle cx='32' cy='32' r='7' fill='%23261612'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+    <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 15V4M7 9l5-5 5 5M5 20h14"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13"/></symbol>
+    <symbol id="i-sound" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4zM16.5 9a4 4 0 0 1 0 6M19 6.5a8 8 0 0 1 0 11"/></symbol>
+    <symbol id="i-mute" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4zM17 9.5l5 5M22 9.5l-5 5"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+    <symbol id="i-shrink" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></symbol>
+    <symbol id="i-table" viewBox="0 0 24 24"><path d="M4 5h16v14H4zM4 10h16M4 14.5h16M10 5v14"/></symbol>
+    <symbol id="i-archive" viewBox="0 0 24 24"><path d="M3.5 4h17v4h-17zM5 8v12h14V8M10 12h4"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6zM9 12l2 2 4-4"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  </svg>
+
+  <div class="app" id="app">
+    <main class="stage-area">
+      <div class="stage-frame">
+        <canvas id="stage" class="stage-canvas" width="1920" height="1080" role="img" aria-label="抽獎轉盤"></canvas>
+      </div>
+
+      <div class="controls">
+        <label class="controls__prize">
+          <span class="controls__label">本輪獎項</span>
+          <span class="select-wrap">
+            <select id="prize-select" class="input select"></select>
+          </span>
+        </label>
+        <div class="controls__go">
+          <button id="spin" class="btn btn--primary btn--spin" type="button">
+            <span class="spinner" aria-hidden="true"></span>
+            <span class="btn__label">開始抽獎</span>
+          </button>
+          <p class="controls__hint" id="spin-hint" aria-live="polite">按空白鍵也能開始</p>
+        </div>
+        <div class="controls__tools">
+          <button id="sound-toggle" class="btn btn--icon" type="button" aria-pressed="true">
+            <svg class="icon" aria-hidden="true"><use href="#i-sound"/></svg>
+            <span class="sr-only">音效</span>
+          </button>
+          <button id="present-toggle" class="btn btn--ghost" type="button" aria-pressed="false">
+            <svg class="icon" aria-hidden="true"><use href="#i-expand"/></svg>
+            <span class="btn__label">簡報模式</span>
+          </button>
+        </div>
+      </div>
+    </main>
+
+    <aside class="panel" aria-label="抽獎設定">
+      <header class="panel__head">
+        <h1 class="brand">抽獎轉盤</h1>
+        <p class="panel__session">場次 <span class="mono" id="session-id">—</span></p>
+      </header>
+
+      <div class="notice" id="sample-notice" hidden>
+        <p>目前是範例資料。換成你的獎項和名單，就能正式抽獎。</p>
+        <button class="btn btn--sm" id="sample-clear" type="button">清除範例資料</button>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="面板">
+        <button class="tab" role="tab" type="button" id="tab-prizes" aria-controls="pane-prizes" aria-selected="true">獎池<span class="tab__count" id="count-prizes"></span></button>
+        <button class="tab" role="tab" type="button" id="tab-people" aria-controls="pane-people" aria-selected="false" tabindex="-1">名單<span class="tab__count" id="count-people"></span></button>
+        <button class="tab" role="tab" type="button" id="tab-records" aria-controls="pane-records" aria-selected="false" tabindex="-1">紀錄<span class="tab__count" id="count-records"></span></button>
+        <button class="tab" role="tab" type="button" id="tab-settings" aria-controls="pane-settings" aria-selected="false" tabindex="-1">設定</button>
+      </div>
+
+      <div class="panel__body">
+        <section class="pane" id="pane-prizes" role="tabpanel" aria-labelledby="tab-prizes">
+          <div class="pane__head">
+            <h2 class="pane__title">獎池</h2>
+            <p class="pane__meta" id="prize-summary"></p>
+          </div>
+          <p class="pane__note">由上而下依序抽出，一個獎項抽完會自動換到下一項。也可以在轉盤下方改選本輪獎項。</p>
+          <fieldset class="lockable">
+            <legend class="sr-only">獎項清單</legend>
+            <ol class="prize-list" id="prize-list"></ol>
+            <button class="btn btn--ghost btn--add" id="prize-add" type="button">
+              <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>新增獎項
+            </button>
+          </fieldset>
+        </section>
+
+        <section class="pane" id="pane-people" role="tabpanel" aria-labelledby="tab-people" hidden>
+          <div class="pane__head">
+            <h2 class="pane__title">抽獎名單</h2>
+            <p class="pane__meta" id="people-summary"></p>
+          </div>
+          <fieldset class="lockable">
+            <legend class="sr-only">抽獎名單</legend>
+            <label class="field" for="people-text">
+              <span class="field__label">每行一位，可從 Excel 直接貼上</span>
+              <textarea id="people-text" class="input textarea" rows="14" spellcheck="false" autocomplete="off" aria-describedby="people-help" placeholder="A001 陳怡君&#10;A002 林家豪"></textarea>
+              <span class="field__help" id="people-help"></span>
+            </label>
+            <div class="row">
+              <button class="btn" id="people-import" type="button">
+                <svg class="icon" aria-hidden="true"><use href="#i-import"/></svg>匯入檔案
+              </button>
+              <button class="btn" id="people-dedupe" type="button">移除重複</button>
+              <button class="btn btn--ghost" id="people-clear" type="button">清空名單</button>
+            </div>
+            <p class="pane__note">可匯入 .txt 或 .csv（UTF-8 或 Big5）。CSV 會把同一列的欄位合成一個名字，例如「A001 陳怡君 業務部」。</p>
+            <label class="check">
+              <input type="checkbox" id="opt-exclude">
+              <span>中獎的人不再參加之後的抽獎</span>
+            </label>
+          </fieldset>
+        </section>
+
+        <section class="pane" id="pane-records" role="tabpanel" aria-labelledby="tab-records" hidden>
+          <div class="pane__head">
+            <h2 class="pane__title">中獎紀錄</h2>
+            <p class="pane__meta" id="records-summary"></p>
+          </div>
+          <div class="row">
+            <button class="btn" id="export-csv" type="button">
+              <svg class="icon" aria-hidden="true"><use href="#i-table"/></svg>匯出中獎名單
+            </button>
+            <button class="btn" id="export-zip" type="button">
+              <span class="spinner" aria-hidden="true"></span>
+              <svg class="icon" aria-hidden="true"><use href="#i-archive"/></svg><span class="btn__label">匯出憑證包</span>
+            </button>
+            <button class="btn btn--ghost" id="verify-video" type="button">
+              <svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg>驗證錄影檔
+            </button>
+          </div>
+          <p class="pane__note">中獎名單是 CSV，Excel 可直接開。憑證包是 ZIP，內含名單、完整抽獎紀錄、每一抽的錄影與 SHA-256 雜湊值。</p>
+          <ol class="records" id="records"></ol>
+        </section>
+
+        <section class="pane" id="pane-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
+          <div class="pane__head">
+            <h2 class="pane__title">設定</h2>
+          </div>
+          <fieldset class="lockable">
+            <legend class="sr-only">抽獎設定</legend>
+            <label class="field" for="opt-title">
+              <span class="field__label">活動名稱</span>
+              <input class="input" id="opt-title" maxlength="40" autocomplete="off" placeholder="2026 年度尾牙" aria-describedby="opt-title-help">
+              <span class="field__help" id="opt-title-help">顯示在轉盤畫面、錄影和匯出的檔名上。</span>
+            </label>
+            <label class="field" for="opt-spin">
+              <span class="field__label">轉動時間 <output id="opt-spin-out" for="opt-spin"></output></span>
+              <input type="range" id="opt-spin" min="3" max="15" step="1">
+            </label>
+            <div class="field">
+              <span class="field__label">錄影</span>
+              <label class="check">
+                <input type="checkbox" id="opt-record">
+                <span>每次抽獎自動錄影</span>
+              </label>
+              <label class="check">
+                <input type="checkbox" id="opt-autodl">
+                <span>錄完自動下載影片檔</span>
+              </label>
+              <p class="field__help" id="record-support"></p>
+              <p class="field__help" id="storage-info"></p>
+            </div>
+            <label class="check">
+              <input type="checkbox" id="opt-sound">
+              <span>音效（會一起錄進影片）</span>
+            </label>
+          </fieldset>
+          <div class="danger">
+            <h3 class="danger__title">重設抽獎</h3>
+            <p>刪除所有中獎紀錄和錄影，並換一組新的場次代碼。獎池和名單會保留。</p>
+            <button class="btn btn--danger-quiet" id="reset-open" type="button">重設抽獎…</button>
+          </div>
+          <p class="pane__note">快捷鍵：空白鍵或 Enter 開始抽獎・F 切換簡報模式・Esc 收起中獎畫面。</p>
+        </section>
+      </div>
+    </aside>
+  </div>
+
+  <dialog class="dialog" id="dlg-void" aria-labelledby="dlg-void-title">
+    <form method="dialog" class="dialog__body">
+      <h2 class="dialog__title" id="dlg-void-title">作廢第 <span data-f="seq"></span> 抽</h2>
+      <p class="dialog__lead"><span data-f="prize"></span>・<strong data-f="name"></strong></p>
+      <label class="field" for="void-reason">
+        <span class="field__label">作廢原因</span>
+        <input class="input" id="void-reason" name="reason" maxlength="60" autocomplete="off" placeholder="未到場">
+      </label>
+      <label class="check">
+        <input type="checkbox" name="back">
+        <span>讓這個人回到候選名單</span>
+      </label>
+      <p class="dialog__note">紀錄和錄影都會保留並標示為作廢，這個獎項會多出 1 個名額可以重抽。</p>
+      <div class="dialog__actions">
+        <button class="btn btn--ghost" type="button" data-close>取消</button>
+        <button class="btn btn--danger" value="confirm">作廢這一抽</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="dialog" id="dlg-reset" aria-labelledby="dlg-reset-title">
+    <form method="dialog" class="dialog__body">
+      <h2 class="dialog__title" id="dlg-reset-title">重設抽獎</h2>
+      <p>會刪除 <strong data-f="records"></strong> 筆中獎紀錄和 <strong data-f="videos"></strong> 段錄影，無法復原。</p>
+      <p class="dialog__warn" data-f="pending" hidden></p>
+      <label class="field" for="reset-confirm">
+        <span class="field__label">輸入「重設」確認</span>
+        <input class="input" id="reset-confirm" name="confirm" autocomplete="off">
+      </label>
+      <div class="dialog__actions">
+        <button class="btn btn--ghost" type="button" data-close>取消</button>
+        <button class="btn" type="button" data-close="export">先匯出憑證包</button>
+        <button class="btn btn--danger" value="confirm" id="reset-go" disabled>重設抽獎</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="dialog dialog--wide" id="dlg-video" aria-labelledby="dlg-video-title">
+    <div class="dialog__body">
+      <h2 class="dialog__title" id="dlg-video-title"></h2>
+      <video class="player" controls playsinline preload="metadata"></video>
+      <dl class="meta" data-f="meta"></dl>
+      <div class="dialog__actions">
+        <button class="btn btn--ghost" type="button" data-close>關閉</button>
+        <button class="btn btn--primary" type="button" data-act="download">
+          <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>下載錄影
+        </button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="dialog" id="dlg-verify" aria-labelledby="dlg-verify-title">
+    <div class="dialog__body">
+      <h2 class="dialog__title" id="dlg-verify-title"></h2>
+      <p class="dialog__lead" data-f="lead"></p>
+      <dl class="meta" data-f="meta"></dl>
+      <div class="dialog__actions">
+        <button class="btn" type="button" data-close>關閉</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div class="toasts" id="toasts"></div>
+  <p class="sr-only" id="announcer" aria-live="assertive"></p>
+  <input type="file" id="file-people" accept=".txt,.csv,.tsv,text/plain,text/csv" hidden>
+  <input type="file" id="file-verify" accept="video/*,.mp4,.webm" hidden>
+
+  <script src="js/util.js"></script>
+  <script src="js/zip.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/sound.js"></script>
+  <script src="js/recorder.js"></script>
+  <script src="js/stage.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
