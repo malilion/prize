@@ -35,10 +35,87 @@
     };
   }
 
+  /* Saved state is re-validated on load: every field that reaches the page, a file name or the
+     ZIP gets its expected type back, so a hand-edited localStorage can't smuggle markup or paths. */
+  const str = (v, max) => String(v == null ? '' : v).slice(0, max);
+  const int = (v, min, max, fallback) => {
+    const n = Math.round(Number(v));
+    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+  };
+  const isoOr = (v, fallback) => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? v : fallback);
+  const sha = (v) => (typeof v === 'string' && /^[0-9a-f]{64}$/.test(v) ? v : '');
+  const STATUSES = ['valid', 'void', 'aborted', 'pending'];
+  const VIDEO_STATES = ['ready', 'recording', 'failed', 'none'];
+
+  function cleanVideoFile(name) {
+    const raw = String(name || '');
+    const m = /\.(mp4|webm)$/i.exec(raw);
+    return `${LW.safeFilename(m ? raw.slice(0, -m[0].length) : raw, 120)}.${m ? m[1].toLowerCase() : 'mp4'}`;
+  }
+
+  function sanitizeState(raw) {
+    const now = new Date().toISOString();
+    const s = {
+      v: VERSION,
+      title: str(raw.title, 40),
+      session: { id: str(raw.session && raw.session.id, 16) || LW.sessionCode(), createdAt: isoOr(raw.session && raw.session.createdAt, now) },
+      prizes: (Array.isArray(raw.prizes) ? raw.prizes : []).map((p) => ({
+        id: str(p && p.id, 64) || LW.uid('prize'),
+        name: str(p && p.name, 40),
+        qty: int(p && p.qty, 1, 999, 1),
+      })),
+      currentPrizeId: raw.currentPrizeId == null ? null : str(raw.currentPrizeId, 64),
+      people: str(raw.people, 2000000),
+      records: [],
+      settings: { ...DEFAULT_SETTINGS },
+      sample: !!raw.sample,
+    };
+    const set = raw.settings || {};
+    s.settings.spinSeconds = int(set.spinSeconds, 3, 15, DEFAULT_SETTINGS.spinSeconds);
+    for (const k of ['record', 'autoDownload', 'sound', 'allowRepeat']) {
+      if (typeof set[k] === 'boolean') s.settings[k] = set[k];
+    }
+    for (const r of Array.isArray(raw.records) ? raw.records : []) {
+      if (!r || typeof r !== 'object') continue;
+      const v = r.video && typeof r.video === 'object' ? r.video : {};
+      const video = { state: VIDEO_STATES.includes(v.state) ? v.state : 'none' };
+      if (video.state === 'ready') {
+        Object.assign(video, {
+          file: cleanVideoFile(v.file),
+          mime: str(v.mime, 80),
+          size: int(v.size, 0, Number.MAX_SAFE_INTEGER, 0),
+          sha256: sha(v.sha256),
+          durationMs: int(v.durationMs, 0, 36e5, 0),
+          downloaded: !!v.downloaded,
+        });
+      } else if (video.state === 'failed') {
+        video.error = str(v.error, 200);
+      }
+      s.records.push({
+        id: str(r.id, 64) || LW.uid('draw'),
+        seq: int(r.seq, 1, 1e6, s.records.length + 1),
+        prizeId: str(r.prizeId, 64),
+        prizeName: str(r.prizeName, 40),
+        name: str(r.name, 200),
+        key: str(r.key, 220),
+        index: int(r.index, 0, 1e7, 0),
+        candidateCount: int(r.candidateCount, 0, 1e7, 0),
+        candidatesHash: sha(r.candidatesHash),
+        drawnAt: isoOr(r.drawnAt, now),
+        status: STATUSES.includes(r.status) ? r.status : 'aborted',
+        voidReason: r.voidReason == null ? undefined : str(r.voidReason, 60),
+        voidAt: r.voidAt == null ? undefined : isoOr(r.voidAt, now),
+        returnToPool: !!r.returnToPool,
+        abortReason: r.abortReason == null ? undefined : str(r.abortReason, 200),
+        video,
+      });
+    }
+    return s;
+  }
+
   function loadState() {
     const saved = LW.Store.load();
-    const s = saved && saved.v === VERSION ? saved : sampleState();
-    s.settings = { ...DEFAULT_SETTINGS, ...(s.settings || {}) };
+    const s = saved && typeof saved === 'object' && saved.v === VERSION ? sanitizeState(saved) : sampleState();
     for (const r of s.records) {
       if (r.status === 'pending') {
         // The page died mid-spin. Keep the pre-drawn result on file so an interrupted draw can't vanish.
@@ -805,8 +882,9 @@
         const snap = await LW.Vault.get(r.id);
         draws.push(auditDraw(r, snap));
         if (r.video && r.video.state === 'ready') {
-          sums.push(`${r.video.sha256}  錄影/${r.video.file}`);
-          if (snap && snap.video) videos.push({ name: `${folder}/錄影/${r.video.file}`, data: snap.video, record: r });
+          const file = cleanVideoFile(r.video.file); // never let a stored name leave the ZIP folder
+          sums.push(`${r.video.sha256}  錄影/${file}`);
+          if (snap && snap.video) videos.push({ name: `${folder}/錄影/${file}`, data: snap.video, record: r });
           else missing.push(r);
         }
       }
@@ -854,7 +932,7 @@
     if (!r || !r.video || r.video.state !== 'ready') return;
     const blob = await videoBlob(r);
     if (!blob) return;
-    LW.download(blob, r.video.file);
+    LW.download(blob, cleanVideoFile(r.video.file));
     r.video.downloaded = true;
     persist();
     renderRecords();
