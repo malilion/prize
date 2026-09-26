@@ -1010,6 +1010,7 @@
       '  把結果和 SHA256SUMS.txt 或 中獎名單.csv 裡的值比對。',
       '也可以在抽獎轉盤的「紀錄 → 驗證錄影檔」選擇影片，自動比對。',
       '整包驗證：在抽獎轉盤程式資料夾開啟 verify.html，選擇這份 ZIP，可在離線電腦上檢查候選名單、結果與錄影。',
+      '整包 ZIP 的 SHA-256 會顯示在匯出後的「紀錄」面板；請在活動時用獨立管道公開，驗證者可在 verify.html 輸入比對。',
       '',
       '【確認候選名單】',
       '錄影畫面下方的「名單指紋」是那一抽候選名單的 SHA-256 前後各 8 碼。',
@@ -1027,6 +1028,7 @@
   async function exportPackage(force = false) {
     if (zipping || busy() || (!force && !state.records.length)) return;
     zipping = true;
+    $('#export-hash').hidden = true;
     renderAll();
     const label = el.exportZip.querySelector('.btn__label');
     el.exportZip.disabled = true;
@@ -1065,7 +1067,11 @@
         date: now,
         onProgress: (done, total) => { label.textContent = `打包中 ${Math.floor((done / Math.max(1, total)) * 100)}%`; },
       });
+      label.textContent = '計算整包指紋';
+      const packageHash = await LW.sha256Hex(zip);
       LW.download(zip, `${folder}.zip`);
+      $('#export-hash-value').textContent = packageHash;
+      $('#export-hash').hidden = false;
       for (const v of videos) v.record.video.downloaded = true;
       persist(true);
       if (missing.length || missingSnapshots.length) {
@@ -1121,19 +1127,15 @@
     clearing = true;
     renderAll();
     try {
-      const before = await Promise.all(state.records.map((r) => LW.Vault.get(r.id)));
+      clearTimeout(saveTimer);
       const incoming = backup.state.records.map((r) => ({
         id: r.id,
         candidates: backup.snapshots.get(r.id) || null,
         candidateKeys: backup.audit.draws.find((d) => d.id === r.id)?.candidateKeys || null,
         video: r.video?.state === 'ready' ? backup.files.get(`${backup.prefix}錄影/${r.video.file}`) || null : null,
       }));
-      await LW.Vault.replace(incoming);
       const restored = sanitizeState(backup.state);
-      if (!LW.Store.save(restored)) {
-        await LW.Vault.replace(before.filter(Boolean));
-        throw new Error('無法寫入場次設定；原場次已保留');
-      }
+      await LW.replaceSession(state, restored, incoming);
       Object.assign(state, restored);
       peopleCache = { text: null, list: [] };
       fpKey = null;
@@ -1311,14 +1313,15 @@
     clearing = true;
     renderAll();
     try {
-      state.records = [];
-      state.session = newSession();
-      state.currentPrizeId = null;
-      ensureCurrentPrize();
-      persist(true);
-      await LW.Vault.clear();
+      clearTimeout(saveTimer);
+      const next = { ...state, records: [], session: newSession(), currentPrizeId: state.prizes[0]?.id || null };
+      await LW.replaceSession(state, next, []);
+      Object.assign(state, next);
+      storageError = false;
       leaveResult();
       toast(`已重設。新的場次代碼是 ${state.session.id}。`);
+    } catch (err) {
+      toast(`重設失敗：${err.message || err}`, { tone: 'error', timeout: 0 });
     } finally {
       clearing = false;
       renderAll();
@@ -1331,22 +1334,20 @@
     clearing = true;
     renderAll();
     try {
-      state.title = '';
-      state.prizes = [];
-      state.people = '';
-      state.records = [];
-      state.currentPrizeId = null;
-      state.session = newSession();
-      state.sample = false;
-      persist(true);
-      await LW.Vault.clear();
+      clearTimeout(saveTimer);
+      const next = { ...state, title: '', prizes: [], people: '', records: [], currentPrizeId: null, session: newSession(), sample: false };
+      await LW.replaceSession(state, next, []);
+      Object.assign(state, next);
+      storageError = false;
       leaveResult();
+      selectTab('prizes');
+      $('#prize-add').focus();
+    } catch (err) {
+      toast(`清除範例失敗：${err.message || err}`, { tone: 'error', timeout: 0 });
     } finally {
       clearing = false;
       renderAll();
       syncStage();
-      selectTab('prizes');
-      $('#prize-add').focus();
     }
   }
 

@@ -79,11 +79,22 @@
         if (!Array.isArray(state.prizes) || typeof state.people !== 'string' || !state.settings || state.prizes.length > 1000 || state.records.length > 100000 || state.people.length > 2000000) errors.push('場次備份內容不完整或超出限制');
         const roster = typeof LW.parsePeople === 'function' && typeof state.people === 'string' ? LW.parsePeople(state.people) : null;
         const peopleByKey = roster ? new Map(roster.map((p) => [p.key, p])) : null;
-        if (roster && audit.participantDetails && JSON.stringify(roster) !== JSON.stringify(audit.participantDetails)) errors.push('場次名單與稽核紀錄中的參加者不符');
-        if (Array.isArray(audit.prizes) && audit.prizes.some((p, i) => p.id && (p.id !== state.prizes?.[i]?.id || p.eligibleGroup !== (state.prizes?.[i]?.eligibleGroup || '') || p.repeatPolicy !== (state.prizes?.[i]?.repeatPolicy || 'inherit')))) errors.push('獎項資格設定與稽核紀錄不符');
+        if (audit.event.title !== state.title?.trim() || audit.event.sessionCreatedAt !== state.session?.createdAt) errors.push('活動名稱或建立時間與場次備份不符');
+        if (roster && (JSON.stringify(roster.map((p) => p.name)) !== JSON.stringify(audit.participants) || JSON.stringify(roster) !== JSON.stringify(audit.participantDetails))) errors.push('場次名單與稽核紀錄中的參加者不符');
+        if (!Array.isArray(audit.prizes) || audit.prizes.length !== state.prizes.length || audit.prizes.some((p, i) => {
+          const prize = state.prizes[i];
+          return p.id !== prize.id || p.name !== (prize.name.trim() || '未命名獎項') || p.quantity !== prize.qty || p.eligibleGroup !== (prize.eligibleGroup || '') || p.repeatPolicy !== (prize.repeatPolicy || 'inherit') || p.drawn !== state.records.filter((r) => r.prizeId === prize.id && r.status === 'valid').length;
+        })) errors.push('獎項清單與場次備份不符');
         for (const [i, r] of state.records.entries()) {
           const d = audit.draws[i];
-          if (r.id !== d.id || r.seq !== d.seq || r.name !== d.winner || r.index !== d.winnerIndex || r.candidatesHash !== d.candidatesSha256 || r.status !== d.status || r.prizeName !== d.prize || (r.video?.state === 'ready' && (r.video.sha256 !== d.video?.sha256 || r.video.file !== d.video?.file))) errors.push(`第 ${i + 1} 抽：場次備份與稽核紀錄不符`);
+          const video = r.video || { state: 'none' };
+          const videoMismatch = video.state === 'ready'
+            ? video.file !== d.video?.file || video.mime !== d.video?.mimeType || video.size !== d.video?.bytes || video.durationMs !== d.video?.durationMs || video.sha256 !== d.video?.sha256
+            : video.state !== d.video?.state || (video.error || undefined) !== (d.video?.error || undefined);
+          const statusMismatch = r.status === 'void'
+            ? r.voidReason !== d.void?.reason || r.voidAt !== d.void?.at || !!r.returnToPool !== d.void?.returnedToPool
+            : r.status === 'aborted' ? r.abortReason !== d.aborted?.reason : !!d.void || !!d.aborted;
+          if (r.id !== d.id || r.seq !== d.seq || r.drawnAt !== d.drawnAt || r.name !== d.winner || r.key !== d.winnerKey || r.index !== d.winnerIndex || r.candidateCount !== d.candidateCount || r.candidatesHash !== d.candidatesSha256 || r.status !== d.status || r.prizeName !== d.prize || JSON.stringify(r.rule || null) !== JSON.stringify(d.eligibility || null) || videoMismatch || statusMismatch) errors.push(`第 ${i + 1} 抽：場次備份與稽核紀錄不符`);
           if (d.candidateKeys && peopleByKey) {
             for (const [n, key] of d.candidateKeys.entries()) {
               const person = peopleByKey.get(key);

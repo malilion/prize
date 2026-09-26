@@ -41,7 +41,7 @@
 
   const DB_NAME = 'lucky-wheel';
   const STORE_NAME = 'draws';
-  const memory = new Map();
+  let memory = new Map();
   let dbPromise = null;
 
   function openDB() {
@@ -108,16 +108,13 @@
     },
 
     async clear() {
-      memory.clear();
-      const db = await openDB();
-      if (db) {
-        try { await run(db, 'readwrite', (s) => s.clear()); } catch (_) { /* nothing left to clear */ }
-      }
+      await Vault.replace([]);
     },
 
     /** Replace all evidence in one IndexedDB transaction; used only after archive validation. */
     async replace(records) {
       const db = await openDB();
+      const replacement = db ? null : new Map(records.map((record) => [record.id, record]));
       if (db) {
         await new Promise((resolve, reject) => {
           const tx = db.transaction(STORE_NAME, 'readwrite');
@@ -129,8 +126,7 @@
           tx.onabort = () => reject(tx.error);
         });
       }
-      memory.clear();
-      if (!db) for (const record of records) memory.set(record.id, record);
+      memory = replacement || new Map();
     },
 
     /** Ask the browser not to evict recordings under storage pressure. */
@@ -142,5 +138,18 @@
     },
   };
 
-  Object.assign(LW, { Store, Vault });
+  /** Swap a complete session; recover the old evidence if the state write is refused. */
+  async function replaceSession(previousState, nextState, evidence, { store = Store, vault = Vault } = {}) {
+    const previousEvidence = (await Promise.all(previousState.records.map((record) => vault.get(record.id)))).filter(Boolean);
+    await vault.replace(evidence);
+    if (store.save(nextState)) return;
+    try {
+      await vault.replace(previousEvidence);
+    } catch (error) {
+      throw new Error(`場次設定無法儲存，原始錄影回復也失敗：${error.message || error}`);
+    }
+    throw new Error('場次設定無法儲存；原場次與錄影已保留');
+  }
+
+  Object.assign(LW, { Store, Vault, replaceSession });
 })(typeof window !== 'undefined' ? window : globalThis);
