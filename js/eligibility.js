@@ -18,11 +18,34 @@
     }
     return list;
   }
-  function eligiblePeople(list, records, prize, settings) {
+  function allowsRepeat(prize, settings) {
     const policy = prize?.repeatPolicy || 'inherit';
-    const allowRepeat = policy === 'allow' || (policy === 'inherit' && settings.allowRepeat);
+    return policy === 'allow' || (policy === 'inherit' && !!settings?.allowRepeat);
+  }
+  function eligiblePeople(list, records, prize, settings) {
+    const allowRepeat = allowsRepeat(prize, settings);
     const held = allowRepeat ? null : new Set(records.filter((r) => r.status === 'valid' || (r.status === 'void' && !r.returnToPool)).map((r) => r.key));
     return list.filter((p) => (!prize?.eligibleGroup || p.group === prize.eligibleGroup) && (!held || !held.has(p.key)));
+  }
+
+  function exclusiveCapacity(list, records, demands) {
+    const available = eligiblePeople(list, records, { repeatPolicy: 'exclude' }, { allowRepeat: false });
+    const required = demands.reduce((sum, demand) => sum + demand.count, 0);
+    const groups = new Map();
+    const availableByGroup = new Map();
+    for (const person of available) availableByGroup.set(person.group, (availableByGroup.get(person.group) || 0) + 1);
+    for (const demand of demands) {
+      if (demand.group) groups.set(demand.group, (groups.get(demand.group) || 0) + demand.count);
+    }
+    return {
+      available: available.length,
+      required,
+      groups: [...groups].map(([group, count]) => ({
+        group,
+        required: count,
+        available: availableByGroup.get(group) || 0,
+      })),
+    };
   }
 
   const NAME_HEADER = /^(姓名|名字|名稱|員工姓名|中文姓名|參加者|name|full ?name)$/i;
@@ -44,5 +67,5 @@
     }).filter(Boolean);
   }
 
-  Object.assign(LW, { parsePeople, eligiblePeople, rosterLinesFromRows });
+  Object.assign(LW, { parsePeople, allowsRepeat, eligiblePeople, exclusiveCapacity, rosterLinesFromRows });
 })(typeof window !== 'undefined' ? window : globalThis);

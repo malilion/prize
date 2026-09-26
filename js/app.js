@@ -147,10 +147,22 @@
   let saveTimer = 0;
   let storageError = false;
   let staleState = false;
+  let preflightCurrent = false;
   let storageProblem = initialRead.status === 'unavailable' ? 'unavailable'
     : initialRead.status === 'corrupt' ? 'corrupt'
       : initialRead.status === 'ok' && !LW.Store.validState(initialRead.value, VERSION) ? 'incompatible' : null;
   let persistedSnapshot = initialRead.raw;
+
+  function invalidatePreflight() {
+    if (checking || !preflightCurrent) return;
+    preflightCurrent = false;
+    const result = $('#preflight-results');
+    result.replaceChildren();
+    const item = document.createElement('li');
+    item.className = 'check-bad';
+    item.textContent = '設定或紀錄已變更，請重新執行活動前檢查。';
+    result.appendChild(item);
+  }
 
   function freshStore() {
     const current = LW.Store.read();
@@ -158,6 +170,7 @@
   }
 
   function saveSessionState(next, { allowRecovery = false } = {}) {
+    invalidatePreflight();
     if (storageProblem === 'unavailable' || (storageProblem && !allowRecovery)) return false;
     if (staleState || !freshStore()) {
       staleState = true;
@@ -172,6 +185,7 @@
   }
 
   function persist(now = false) {
+    invalidatePreflight();
     clearTimeout(saveTimer);
     const write = () => {
       if (storageProblem) return false;
@@ -786,7 +800,7 @@
         drawnAt: new Date().toISOString(),
         status: 'pending',
         video: recorder ? { state: 'recording' } : { state: 'none' },
-        rule: { eligibleGroup: prize.eligibleGroup || '', repeatPolicy: prize.repeatPolicy || 'inherit', allowRepeat: prize.repeatPolicy === 'allow' || (prize.repeatPolicy !== 'exclude' && state.settings.allowRepeat) },
+        rule: { eligibleGroup: prize.eligibleGroup || '', repeatPolicy: prize.repeatPolicy || 'inherit', allowRepeat: LW.allowsRepeat(prize, state.settings) },
       };
       await assertLock();
       state.records.push(record);
@@ -872,6 +886,8 @@
   async function runPreflight() {
     if (busy()) return;
     checking = true;
+    preflightCurrent = false;
+    $('#preflight-results').replaceChildren();
     renderAll();
     try {
     const checks = [];
@@ -881,10 +897,22 @@
     add(people().length > 0, `名單有 ${people().length} 人`);
     const duplicates = duplicateNames();
     add(!duplicates.length, duplicates.length ? `${duplicates.length} 個名字重複，請確認是否為不同的人` : '名單沒有完全相同的名字');
-    const slots = state.prizes.reduce((n, p) => n + remaining(p), 0);
-    for (const prize of state.prizes) add(candidates(prize).length >= remaining(prize), `「${prizeLabel(prize)}」可抽 ${candidates(prize).length} 人、尚有 ${remaining(prize)} 個名額`);
-    const allExclude = state.prizes.every((p) => p.repeatPolicy === 'exclude' || (p.repeatPolicy !== 'allow' && !state.settings.allowRepeat));
-    if (allExclude) add(people().length >= slots, `尚有 ${slots} 個名額、名單共 ${people().length} 人（跨組別名額請另行核對）`);
+    for (const prize of state.prizes) {
+      const available = candidates(prize).length;
+      const left = remaining(prize);
+      const repeat = LW.allowsRepeat(prize, state.settings);
+      add(!left || (available > 0 && (repeat || available >= left)),
+        `「${prizeLabel(prize)}」可抽 ${available} 人、尚有 ${left} 個名額${repeat ? '（允許重複中獎）' : ''}`);
+    }
+    const exclusiveDemands = state.prizes.filter((prize) =>
+      remaining(prize) > 0 && !LW.allowsRepeat(prize, state.settings))
+      .map((prize) => ({ group: prize.eligibleGroup, count: remaining(prize) }));
+    if (exclusiveDemands.length) {
+      const capacity = LW.exclusiveCapacity(people(), state.records, exclusiveDemands);
+      add(capacity.available >= capacity.required, `排除重複中獎的獎項尚有 ${capacity.required} 個名額，目前未占用名單有 ${capacity.available} 人`);
+      for (const group of capacity.groups) add(group.available >= group.required,
+        `「${group.group}」組的排除重複中獎獎項合計尚有 ${group.required} 個名額，目前可用 ${group.available} 人`);
+    }
     add(!state.settings.record || LW.Recorder.supported(), '此瀏覽器可執行目前的錄影設定');
     await LW.Vault.ready();
     await recoverRecordings();
@@ -899,10 +927,10 @@
     let missingVideos = 0;
     for (const record of state.records) {
       const saved = await LW.Vault.get(record.id);
-      if (!saved?.candidates) missingSnapshots++;
+      if (!Array.isArray(saved?.candidates) || !Array.isArray(saved?.candidateKeys)) missingSnapshots++;
       if (record.video?.state === 'ready' && !saved?.video) missingVideos++;
     }
-    add(!missingSnapshots && !missingVideos, missingSnapshots || missingVideos ? `既有紀錄缺少 ${missingSnapshots} 份候選快照、${missingVideos} 段錄影` : '既有紀錄的候選快照與錄影可取得');
+    add(!missingSnapshots && !missingVideos, missingSnapshots || missingVideos ? `既有紀錄缺少 ${missingSnapshots} 份候選名單或識別鍵快照、${missingVideos} 段錄影` : '既有紀錄的候選快照與錄影可取得');
     if (navigator.storage && navigator.storage.estimate) {
       try {
         const { usage, quota } = await navigator.storage.estimate();
@@ -911,8 +939,13 @@
       } catch (_) { add(false, '無法查詢可用瀏覽器空間'); }
     }
     $('#preflight-results').innerHTML = checks.map((c) => `<li class="${c.ok ? 'check-ok' : 'check-bad'}">${c.ok ? '通過' : '注意'}：${esc(c.message)}</li>`).join('');
+    preflightCurrent = true;
     toast(checks.every((c) => c.ok) ? '活動前檢查通過' : `活動前檢查有 ${checks.filter((c) => !c.ok).length} 項需要處理`, { tone: checks.every((c) => c.ok) ? 'info' : 'error' });
     } catch (err) {
+      const item = document.createElement('li');
+      item.className = 'check-bad';
+      item.textContent = `活動前檢查未完成：${err.message || err}`;
+      $('#preflight-results').replaceChildren(item);
       toast(`活動前檢查未完成：${err.message || err}`, { tone: 'error' });
     } finally {
       checking = false;
@@ -1858,6 +1891,7 @@
   window.addEventListener('pagehide', () => persist(true));
   window.addEventListener('storage', (event) => {
     if (event.key !== LW.Store.stateKey || event.newValue === persistedSnapshot) return;
+    invalidatePreflight();
     if (!staleState) toast('另一個分頁已更新此場次。請重新整理後繼續操作。', { tone: 'error', timeout: 0 });
     staleState = true;
     renderControls();

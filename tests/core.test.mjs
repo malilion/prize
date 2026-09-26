@@ -292,6 +292,27 @@ test('eligibility applies group and per-prize repeat rules', () => {
   const records = [{ key: people[0].key, status: 'valid' }];
   assert.equal(LW.eligiblePeople(people, records, { eligibleGroup: '業務', repeatPolicy: 'exclude' }, { allowRepeat: true }).length, 1);
   assert.equal(LW.eligiblePeople(people, records, { eligibleGroup: '業務', repeatPolicy: 'allow' }, { allowRepeat: false }).length, 2);
+  assert.equal(LW.allowsRepeat({ repeatPolicy: 'allow' }, { allowRepeat: false }), true);
+  assert.equal(LW.allowsRepeat({ repeatPolicy: 'exclude' }, { allowRepeat: true }), false);
+  assert.equal(LW.allowsRepeat({ repeatPolicy: 'inherit' }, { allowRepeat: true }), true);
+});
+
+test('preflight capacity combines exclusive prize demand by group and excludes held winners', () => {
+  const people = LW.parsePeople('甲 | 業務\n乙 | 業務\n丙 | 工程');
+  const held = [{ key: people[0].key, status: 'valid' }];
+  const capacity = LW.exclusiveCapacity(people, held, [
+    { group: '業務', count: 1 }, { group: '業務', count: 1 },
+  ]);
+  assert.equal(capacity.available, 2);
+  assert.equal(capacity.required, 2);
+  assert.equal(capacity.groups[0].available, 1);
+  assert.equal(capacity.groups[0].required, 2);
+  const returned = LW.exclusiveCapacity(people, [{ key: people[0].key, status: 'void', returnToPool: true }], [
+    { group: '業務', count: 2 }, { group: '', count: 1 },
+  ]);
+  assert.equal(returned.available, 3);
+  assert.equal(returned.required, 3);
+  assert.equal(returned.groups[0].available, 2);
 });
 
 test('roster import uses named columns without appending unrelated personal data', () => {
