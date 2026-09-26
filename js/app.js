@@ -1047,7 +1047,7 @@
   /* =================================================================== exports */
 
   function csvRows() {
-    const rows = [['序號', '獎項', '中獎者', '抽出時間', '狀態', '備註', '候選人數', '名單指紋（SHA-256）', '錄影檔名', '錄影 SHA-256', '場次代碼']];
+    const rows = [[...LW.AUDIT_CSV_HEADER]];
     for (const r of state.records) {
       if (r.status === 'pending') continue;
       const v = r.video || {};
@@ -1056,7 +1056,7 @@
         ? `${r.voidReason || ''}${r.returnToPool ? '（已放回名單）' : ''}`
         : r.status === 'aborted' ? `抽獎中斷：${r.abortReason || ''}` : '';
       rows.push([
-        r.seq, r.prizeName, r.name, LW.formatDateTime(r.drawnAt), STATUS_LABEL[r.status] || r.status, note,
+        r.seq, r.prizeName, r.name, new Date(r.drawnAt).toISOString(), STATUS_LABEL[r.status] || r.status, note,
         r.candidateCount, r.candidatesHash, ready ? v.file : '', ready ? v.sha256 : '', state.session.id,
       ]);
     }
@@ -1102,7 +1102,7 @@
 
   function auditDoc(draws, now) {
     return {
-      format: 'lucky-wheel-audit/1',
+      format: 'lucky-wheel-audit/2',
       exportedAt: now.toISOString(),
       event: { title: state.title.trim(), sessionId: state.session.id, sessionCreatedAt: state.session.createdAt },
       method: {
@@ -1130,7 +1130,7 @@
       '序號連續編排；作廢與中斷的抽次也保留在紀錄裡，不會被刪除。',
       '',
       '【內容】',
-      '中獎名單.csv　每一抽的獎項、中獎者、時間、錄影檔名與 SHA-256，可直接用 Excel 開啟。',
+      '中獎名單.csv　每一抽的獎項、中獎者、UTC 時間、錄影檔名與 SHA-256，可直接用 Excel 開啟。',
       '抽獎紀錄.json　完整稽核紀錄，含每一抽當下的候選名單（candidates）。',
       '場次狀態.json　完整場次設定、獎項、名單與抽獎紀錄，可在「設定 → 還原場次備份」讀取。',
       '錄影/　　　　　每一抽的完整錄影，畫面下方顯示場次、抽次、候選人數、名單指紋與時間。',

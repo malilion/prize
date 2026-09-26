@@ -219,6 +219,7 @@
   const toCSV = (rows) => '﻿' + rows.map((row) => row.map(csvCell).join(',')).join('\r\n') + '\r\n';
 
   function parseCSV(text) {
+    text = text.replace(/^\uFEFF/, '');
     const firstLine = text.slice(0, text.search(/\r?\n|$/));
     const delim = [',', '\t', ';'].reduce((best, d) =>
       firstLine.split(d).length > firstLine.split(best).length ? d : best, ',');

@@ -4,6 +4,9 @@
   const LW = (root.LW = root.LW || {});
   const decoder = new TextDecoder('utf-8', { fatal: true });
   const hex = (s) => typeof s === 'string' && /^[0-9a-f]{64}$/.test(s);
+  const AUDIT_CSV_HEADER = Object.freeze(['序號', '獎項', '中獎者', '抽出時間（UTC）', '狀態', '備註', '候選人數', '名單指紋（SHA-256）', '錄影檔名', '錄影 SHA-256', '場次代碼']);
+  const LEGACY_CSV_HEADER = [...AUDIT_CSV_HEADER];
+  LEGACY_CSV_HEADER[3] = '抽出時間';
 
   async function inspectPackage(blob) {
     const files = await LW.readZip(blob);
@@ -16,7 +19,7 @@
       return decoder.decode(await file.arrayBuffer());
     };
     const audit = JSON.parse(await readText('抽獎紀錄.json'));
-    if (!audit || audit.format !== 'lucky-wheel-audit/1' || !Array.isArray(audit.draws) || audit.draws.length > 100000 || !audit.event || typeof audit.event.sessionId !== 'string') throw new Error('抽獎紀錄格式不正確或抽次過多');
+    if (!audit || !['lucky-wheel-audit/1', 'lucky-wheel-audit/2'].includes(audit.format) || !Array.isArray(audit.draws) || audit.draws.length > 100000 || !audit.event || typeof audit.event.sessionId !== 'string') throw new Error('抽獎紀錄格式不正確或抽次過多');
     const lines = (await readText('SHA256SUMS.txt')).trim().split(/\r?\n/).filter(Boolean);
     const sums = new Map();
     for (const line of lines) {
@@ -32,7 +35,10 @@
       if (!known.has(relative) && !relative.startsWith('錄影/')) errors.push(`憑證包有未知檔案：${relative}`);
     }
     const csv = LW.parseCSV(await readText('中獎名單.csv'));
+    const expectedHeader = audit.format === 'lucky-wheel-audit/2' ? AUDIT_CSV_HEADER : LEGACY_CSV_HEADER;
+    if (JSON.stringify(csv[0]) !== JSON.stringify(expectedHeader)) errors.push('中獎名單.csv 的表頭不正確');
     if (csv.length !== audit.draws.length + 1) errors.push('中獎名單.csv 的抽次數量與稽核紀錄不符');
+    if (audit.format === 'lucky-wheel-audit/1') warnings.push('舊版憑證包的 CSV 使用未標示時區的本地時間，無法驗證時間欄位');
     const snapshots = new Map();
     const usedVideos = new Set();
     const ids = new Set();
@@ -44,7 +50,14 @@
       const csvRow = csv[i + 1];
       const safeCell = (value) => /^[=+\-@\t\r]/.test(String(value)) ? `'${value}` : String(value);
       const statusLabel = { valid: '有效', void: '作廢', aborted: '中斷' }[draw.status];
-      if (!csvRow || csvRow[0] !== String(draw.seq) || csvRow[1] !== safeCell(draw.prize) || csvRow[2] !== safeCell(draw.winner) || csvRow[4] !== statusLabel || csvRow[6] !== String(draw.candidateCount) || csvRow[7] !== draw.candidatesSha256 || csvRow[8] !== (draw.video?.file || '') || csvRow[9] !== (draw.video?.sha256 || '') || csvRow[10] !== audit.event.sessionId) errors.push(`${tag}：中獎名單.csv 與稽核紀錄不符`);
+      const note = draw.status === 'void'
+        ? `${draw.void?.reason || ''}${draw.void?.returnedToPool ? '（已放回名單）' : ''}`
+        : draw.status === 'aborted' ? `抽獎中斷：${draw.aborted?.reason || ''}` : '';
+      const utc = typeof draw.drawnAt === 'string' && !Number.isNaN(Date.parse(draw.drawnAt))
+        ? new Date(draw.drawnAt).toISOString() : null;
+      if (!csvRow || csvRow.length !== expectedHeader.length || csvRow[0] !== String(draw.seq) || csvRow[1] !== safeCell(draw.prize) || csvRow[2] !== safeCell(draw.winner) ||
+        (audit.format === 'lucky-wheel-audit/2' && csvRow[3] !== utc) || csvRow[4] !== statusLabel || csvRow[5] !== safeCell(note) ||
+        csvRow[6] !== String(draw.candidateCount) || csvRow[7] !== draw.candidatesSha256 || csvRow[8] !== (draw.video?.file || '') || csvRow[9] !== (draw.video?.sha256 || '') || csvRow[10] !== audit.event.sessionId) errors.push(`${tag}：中獎名單.csv 與稽核紀錄不符`);
       if (!draw || draw.seq !== i + 1 || typeof draw.id !== 'string' || ids.has(draw.id) || !['valid', 'void', 'aborted'].includes(draw.status)) errors.push(`${tag}：抽次、ID 或狀態不正確`);
       if (draw && typeof draw.id === 'string') ids.add(draw.id);
       if (!Array.isArray(draw.candidates)) {
@@ -120,5 +133,5 @@
     return { files, prefix, audit, state, snapshots, errors, warnings };
   }
 
-  LW.inspectPackage = inspectPackage;
+  Object.assign(LW, { inspectPackage, AUDIT_CSV_HEADER });
 })(typeof window !== 'undefined' ? window : globalThis);

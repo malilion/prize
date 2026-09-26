@@ -306,8 +306,8 @@ test('unfinished recording metadata is recovered only from a matching saved Blob
 test('a backup before the first draw can be inspected and restored', async () => {
   const state = { v: 1, title: '活動', session: { id: 'EMPTY', createdAt: '2026-09-27T00:00:00.000Z' }, people: '甲', prizes: [], records: [], settings: { allowRepeat: false } };
   const zip = await LW.makeZip([
-    { name: '包/抽獎紀錄.json', data: JSON.stringify({ format: 'lucky-wheel-audit/1', event: { title: '活動', sessionId: 'EMPTY', sessionCreatedAt: state.session.createdAt }, prizes: [], participants: ['甲'], participantDetails: [{ name: '甲', group: '', key: '甲' }], draws: [] }) },
-    { name: '包/中獎名單.csv', data: LW.toCSV([['序號']]) },
+    { name: '包/抽獎紀錄.json', data: JSON.stringify({ format: 'lucky-wheel-audit/2', event: { title: '活動', sessionId: 'EMPTY', sessionCreatedAt: state.session.createdAt }, prizes: [], participants: ['甲'], participantDetails: [{ name: '甲', group: '', key: '甲' }], draws: [] }) },
+    { name: '包/中獎名單.csv', data: LW.toCSV([LW.AUDIT_CSV_HEADER]) },
     { name: '包/場次狀態.json', data: JSON.stringify({ format: 'lucky-wheel-session/1', state }) },
     { name: '包/SHA256SUMS.txt', data: '' },
   ]);
@@ -327,12 +327,14 @@ test('standalone inspector verifies candidate, winner, video, and restorable sta
   const record = { id: 'draw1', seq: 1, prizeId: 'p1', name: '甲', key: '甲 | 業務', index: 0, candidateCount: 1, candidatesHash: candidateHash, status: 'valid', prizeName: '獎品', drawnAt: '2026-09-27T00:00:00.000Z', rule, video: videoMeta };
   const draw = { id: 'draw1', seq: 1, winner: '甲', winnerKey: '甲 | 業務', winnerIndex: 0, candidateCount: 1, candidatesSha256: candidateHash, candidates: names, candidateKeys: ['甲 | 業務'], eligibility: rule, drawnAt: record.drawnAt, status: 'valid', prize: '獎品', video: { file: 'draw.webm', mimeType: 'video/webm', sha256: videoHash, bytes: video.size, durationMs: 1000 } };
   const state = { v: 1, title: '測試', session: { id: 'ABC', createdAt: '2026-09-27T00:00:00.000Z' }, people: roster, prizes: [{ id: 'p1', name: '獎品', qty: 1, eligibleGroup: '業務', repeatPolicy: 'exclude' }], records: [record], settings: { allowRepeat: false } };
-  async function archive(editedDraw = draw, includeVideo = true, editAudit = () => {}) {
-    const audit = { format: 'lucky-wheel-audit/1', event: { title: '測試', sessionId: 'ABC', sessionCreatedAt: state.session.createdAt }, prizes: [{ id: 'p1', name: '獎品', quantity: 1, eligibleGroup: '業務', repeatPolicy: 'exclude', drawn: 1 }], participants: ['甲', '乙'], participantDetails: [{ name: '甲', group: '業務', key: '甲 | 業務' }, { name: '乙', group: '工程', key: '乙 | 工程' }], draws: [editedDraw] };
+  async function archive(editedDraw = draw, includeVideo = true, editAudit = () => {}, editCsv = () => {}) {
+    const audit = { format: 'lucky-wheel-audit/2', event: { title: '測試', sessionId: 'ABC', sessionCreatedAt: state.session.createdAt }, prizes: [{ id: 'p1', name: '獎品', quantity: 1, eligibleGroup: '業務', repeatPolicy: 'exclude', drawn: 1 }], participants: ['甲', '乙'], participantDetails: [{ name: '甲', group: '業務', key: '甲 | 業務' }, { name: '乙', group: '工程', key: '乙 | 工程' }], draws: [editedDraw] };
     editAudit(audit);
+    const csvRows = [[...LW.AUDIT_CSV_HEADER], ['1', '獎品', '甲', record.drawnAt, '有效', '', '1', candidateHash, 'draw.webm', videoHash, 'ABC']];
+    editCsv(csvRows);
     return LW.makeZip([
       { name: '包/抽獎紀錄.json', data: JSON.stringify(audit) },
-      { name: '包/中獎名單.csv', data: LW.toCSV([['序號', '獎項', '中獎者', '抽出時間', '狀態', '備註', '候選人數', '名單指紋（SHA-256）', '錄影檔名', '錄影 SHA-256', '場次代碼'], ['1', '獎品', '甲', '', '有效', '', '1', candidateHash, 'draw.webm', videoHash, 'ABC']]) },
+      { name: '包/中獎名單.csv', data: LW.toCSV(csvRows) },
       { name: '包/場次狀態.json', data: JSON.stringify({ format: 'lucky-wheel-session/1', state }) },
       { name: '包/SHA256SUMS.txt', data: includeVideo ? `${videoHash}  錄影/draw.webm\n` : '' },
       ...(includeVideo ? [{ name: '包/錄影/draw.webm', data: video }] : []),
@@ -341,6 +343,15 @@ test('standalone inspector verifies candidate, winner, video, and restorable sta
   const report = await LW.inspectPackage(await archive());
   assert.equal(report.errors.length, 0);
   assert.equal(report.warnings.length, 0);
+  for (const column of [3, 5]) {
+    const changedCsv = await LW.inspectPackage(await archive(draw, true, () => {}, (rows) => { rows[1][column] = '被修改'; }));
+    assert.ok(changedCsv.errors.some((error) => error.includes('中獎名單.csv 與稽核紀錄不符')));
+  }
+  const changedHeader = await LW.inspectPackage(await archive(draw, true, () => {}, (rows) => { rows[0][3] = '其他時間'; }));
+  assert.ok(changedHeader.errors.some((error) => error.includes('表頭不正確')));
+  const legacy = await LW.inspectPackage(await archive(draw, true, (audit) => { audit.format = 'lucky-wheel-audit/1'; }, (rows) => { rows[0][3] = '抽出時間'; rows[1][3] = ''; }));
+  assert.equal(legacy.errors.length, 0);
+  assert.ok(legacy.warnings.some((warning) => warning.includes('無法驗證時間欄位')));
   assert.equal(report.state.session.id, 'ABC');
   assert.equal(report.files.get('包/錄影/draw.webm').size, video.size);
   const altered = await LW.inspectPackage(await archive({ ...draw, winner: '乙' }));
