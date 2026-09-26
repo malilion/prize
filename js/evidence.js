@@ -8,6 +8,41 @@
   const LEGACY_CSV_HEADER = [...AUDIT_CSV_HEADER];
   LEGACY_CSV_HEADER[3] = '抽出時間';
 
+  function formatVerificationReport({ fileName = '', actualHash = '', expectedHash = '', report = null, error = null, generatedAt = new Date() } = {}) {
+    const oneLine = (value) => String(value == null ? '' : value).replace(/[\r\n\t]+/g, ' ').trim();
+    const actual = oneLine(actualHash).toLowerCase();
+    const expected = oneLine(expectedHash).toLowerCase();
+    const hashResult = !expected ? '未提供公開指紋，無法確認 ZIP 是否與活動時公布的檔案相同'
+      : !hex(expected) ? '公開指紋格式不正確'
+        : !hex(actual) ? 'ZIP 指紋無法計算，未能比對公開值'
+          : actual === expected ? '公開指紋相符' : '公開指紋不符';
+    const packageResult = error ? '無法完成包內檢查'
+      : !report ? '尚未完成包內檢查'
+        : report.errors.length ? '包內檢查未通過'
+          : report.warnings.length ? '包內資料一致，但有注意事項' : '包內資料一致';
+    const lines = [
+      '抽獎憑證包驗證報告',
+      `產生時間（UTC）：${new Date(generatedAt).toISOString()}`,
+      `ZIP 檔名：${oneLine(fileName) || '未提供'}`,
+      `ZIP SHA-256：${hex(actual) ? actual : '無法計算'}`,
+      `活動時公開的 SHA-256：${expected || '未提供'}`,
+      `包內檢查：${packageResult}`,
+      `公開指紋比對：${hashResult}`,
+    ];
+    if (report) {
+      lines.push(`活動：${oneLine(report.audit?.event?.title) || '未命名'}`,
+        `場次：${oneLine(report.audit?.event?.sessionId) || '未提供'}`,
+        `抽次：${report.audit?.draws?.length ?? '未知'}`,
+        `錯誤：${report.errors.length} 項`,
+        ...report.errors.map((item) => `  - ${oneLine(item)}`),
+        `注意事項：${report.warnings.length} 項`,
+        ...report.warnings.map((item) => `  - ${oneLine(item)}`));
+    }
+    if (error) lines.push(`檢查失敗原因：${oneLine(error.message || error)}`);
+    lines.push('', '本報告可自行編輯；請保留原始 ZIP 與活動時公開的指紋，供他人獨立覆核。');
+    return lines.join('\r\n') + '\r\n';
+  }
+
   async function inspectPackage(blob) {
     const files = await LW.readZip(blob);
     const roots = [...files.keys()].map((name) => name.split('/')[0]);
@@ -144,5 +179,5 @@
     return { files, prefix, audit, state, snapshots, errors, warnings };
   }
 
-  Object.assign(LW, { inspectPackage, AUDIT_CSV_HEADER });
+  Object.assign(LW, { inspectPackage, formatVerificationReport, AUDIT_CSV_HEADER });
 })(typeof window !== 'undefined' ? window : globalThis);

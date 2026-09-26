@@ -412,6 +412,21 @@ test('a backup before the first draw can be inspected and restored', async () =>
   assert.equal(report.state.session.id, 'EMPTY');
 });
 
+test('verification report separates archive integrity from a published ZIP hash', () => {
+  const hash = 'a'.repeat(64);
+  const report = { audit: { event: { title: '活動', sessionId: 'ABC' }, draws: [{}] }, errors: [], warnings: ['缺少一段錄影'] };
+  const options = { fileName: '憑證.zip', actualHash: hash, report, generatedAt: '2026-09-27T00:00:00.000Z' };
+  const matched = LW.formatVerificationReport({ ...options, expectedHash: hash });
+  assert.match(matched, /包內資料一致，但有注意事項/);
+  assert.match(matched, /公開指紋相符/);
+  assert.match(matched, /缺少一段錄影/);
+  assert.match(LW.formatVerificationReport({ ...options, expectedHash: 'b'.repeat(64) }), /公開指紋不符/);
+  assert.match(LW.formatVerificationReport(options), /未提供公開指紋/);
+  const failed = LW.formatVerificationReport({ ...options, report: null, error: new Error('ZIP 校驗失敗') });
+  assert.match(failed, /無法完成包內檢查/);
+  assert.match(failed, /檢查失敗原因：ZIP 校驗失敗/);
+});
+
 test('standalone inspector verifies candidate, winner, video, and restorable state', async () => {
   const video = new Blob([Uint8Array.of(3, 1, 4, 1, 5)]);
   const videoHash = await LW.sha256Hex(video);

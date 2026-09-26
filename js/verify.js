@@ -5,9 +5,11 @@
   const issues = document.getElementById('issues');
   const draws = document.getElementById('draws');
   const expectedInput = document.getElementById('expected-hash');
+  const downloadReport = document.getElementById('download-report');
   let lastDigest = '';
   let lastReport = null;
   let lastError = null;
+  let lastFileName = '';
   function line(parent, value, className) {
     const li = document.createElement('li');
     li.textContent = value;
@@ -35,18 +37,35 @@
     const failedHash = !!expected && match.className === 'bad';
     const failed = failedHash || !!lastError || !!lastReport?.errors.length;
     const warning = !!lastReport?.warnings.length;
-    title.textContent = failed ? '驗證未通過' : warning ? '驗證通過，部分資料缺少' : '驗證通過';
+    title.textContent = lastError ? '無法驗證' : failed ? '驗證未通過'
+      : warning ? '包內檢查通過，存在注意事項' : expected ? '驗證通過' : '包內檢查通過';
     title.className = failed ? 'bad' : warning ? 'warn' : 'ok';
   }
   expectedInput.addEventListener('input', renderHashComparison);
+  downloadReport.addEventListener('click', () => {
+    if (!lastFileName || downloadReport.disabled) return;
+    const content = LW.formatVerificationReport({
+      fileName: lastFileName,
+      actualHash: lastDigest,
+      expectedHash: expectedInput.value,
+      report: lastReport,
+      error: lastError,
+      generatedAt: new Date(),
+    });
+    const name = LW.safeFilename(lastFileName.replace(/\.zip$/i, ''), 40);
+    LW.download(new Blob(['\uFEFF', content], { type: 'text/plain;charset=utf-8' }), `驗證報告_${name}_${LW.fileStamp()}.txt`);
+  });
   input.addEventListener('change', async () => {
     const file = input.files[0];
     result.hidden = true;
-    if (!file) return;
+    if (!file) { lastFileName = ''; downloadReport.disabled = true; return; }
+    lastFileName = file.name;
+    downloadReport.disabled = true;
     lastDigest = '';
     lastReport = null;
     lastError = null;
     document.getElementById('actual-hash').textContent = '';
+    document.getElementById('hash-match').textContent = '';
     input.disabled = true;
     document.getElementById('status').textContent = `正在逐檔驗證 ${file.name}…`;
     try {
@@ -74,6 +93,6 @@
       draws.replaceChildren();
       if (lastDigest) renderHashComparison();
       document.getElementById('status').textContent = '檢查失敗';
-    } finally { input.disabled = false; }
+    } finally { input.disabled = false; downloadReport.disabled = false; }
   });
 })();
