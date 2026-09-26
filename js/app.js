@@ -155,6 +155,7 @@
   let phase = 'idle'; // idle → drawing → saving → result → idle
   let zipping = false;
   let clearing = false;
+  let voiding = false;
   let checking = state.records.some((record) => (record.status === 'valid' || record.status === 'void') && record.video?.state === 'failed');
   let saveTimer = 0;
   let storageError = false;
@@ -279,7 +280,7 @@
   /** Valid winners of a prize, newest first. */
   const winnersOf = (id) => state.records.filter((r) => r.prizeId === id && r.status === 'valid')
     .map((r) => identityHint(r) ? `${r.name} · ${r.key}` : r.name).reverse();
-  const busy = () => phase === 'drawing' || phase === 'saving' || phase === 'rehearsal' || zipping || clearing || checking;
+  const busy = () => phase === 'drawing' || phase === 'saving' || phase === 'rehearsal' || zipping || clearing || voiding || checking;
   const rosterLocked = () => state.records.length > 0;
   const readyVideos = () => state.records.filter((r) => r.video && r.video.state === 'ready');
 
@@ -487,10 +488,10 @@
     const blocker = isBusy ? null : drawBlocker();
     el.spin.disabled = isBusy || !!blocker;
     el.spin.setAttribute('aria-busy', String(isBusy));
-    el.spinLabel.textContent = phase === 'drawing' ? '抽獎中' : phase === 'saving' ? '儲存錄影' : phase === 'rehearsal' ? '預演中' : zipping ? '憑證包打包中' : clearing ? '正在處理場次' : checking ? '檢查中' : '開始抽獎';
+    el.spinLabel.textContent = phase === 'drawing' ? '抽獎中' : phase === 'saving' ? '儲存錄影' : phase === 'rehearsal' ? '預演中' : zipping ? '憑證包打包中' : clearing ? '正在處理場次' : voiding ? '正在作廢' : checking ? '檢查中' : '開始抽獎';
     el.spinHint.textContent = blocker ||
       (phase === 'drawing' && state.settings.record ? '錄影中，請不要切換分頁或關閉視窗' :
-        phase === 'saving' ? '正在儲存這一抽的錄影…' : zipping ? '請等憑證包打包完成' : clearing ? '請等場次處理完成' : checking ? '活動前檢查進行中' : '按空白鍵也能開始');
+        phase === 'saving' ? '正在儲存這一抽的錄影…' : zipping ? '請等憑證包打包完成' : clearing ? '請等場次處理完成' : voiding ? '請等作廢狀態保存完成' : checking ? '活動前檢查進行中' : '按空白鍵也能開始');
     el.spinHint.classList.toggle('is-warning', !!blocker);
     const last = state.records[state.records.length - 1];
     el.stageText.textContent = phase === 'drawing' ? `第 ${last?.status === 'pending' ? last.seq : state.records.length + 1} 抽轉盤轉動中；結果完成後會公布。`
@@ -1761,37 +1762,55 @@
     $('[data-f="seq"]', dlg).textContent = r.seq;
     $('[data-f="prize"]', dlg).textContent = r.prizeName;
     $('[data-f="name"]', dlg).textContent = r.name;
+    const identity = $('[data-f="identity"]', dlg);
+    identity.hidden = !identityHint(r);
+    identity.textContent = identity.hidden ? '' : `識別鍵：${r.key}`;
     openDialog(dlg);
   }
 
-  el.dlgVoid.addEventListener('close', () => {
+  el.dlgVoid.addEventListener('close', async () => {
     const dlg = el.dlgVoid;
     if (dlg.returnValue !== 'confirm') return;
     const r = state.records.find((x) => x.id === dlg.dataset.id);
     if (!r || r.status !== 'valid' || !canEditSession()) return;
     const form = $('form', dlg);
-    const index = state.records.indexOf(r);
-    const previousPrizeId = state.currentPrizeId;
-    state.records[index] = {
-      ...r,
-      status: 'void',
-      voidReason: form.elements.reason.value.trim() || '未註明',
-      voidAt: new Date().toISOString(),
-      returnToPool: form.elements.back.checked,
-    };
-    state.currentPrizeId = r.prizeId; // the freed slot is usually redrawn right away
-    if (!persist(true)) {
-      state.records[index] = r;
-      state.currentPrizeId = previousPrizeId;
+    const reason = form.elements.reason.value.trim() || '未註明';
+    const returnToPool = form.elements.back.checked;
+    voiding = true;
+    renderAll();
+    try {
+      await LW.DrawGate.run(state.session.id, async (assertLock) => {
+        await assertLock();
+        if (storageProblem || staleState || !freshStore()) {
+          markStale();
+          throw new Error('場次資料已變更，請重新整理後再作廢');
+        }
+        const index = state.records.findIndex((record) => record.id === r.id && record.status === 'valid');
+        if (index < 0) throw new Error('這一抽已不是有效紀錄，無法作廢');
+        const previousPrizeId = state.currentPrizeId;
+        state.records[index] = {
+          ...r,
+          status: 'void',
+          voidReason: reason,
+          voidAt: new Date().toISOString(),
+          returnToPool,
+        };
+        state.currentPrizeId = r.prizeId; // the freed slot is usually redrawn right away
+        if (!persist(true)) {
+          state.records[index] = r;
+          state.currentPrizeId = previousPrizeId;
+          throw new Error('作廢狀態無法保存，這一抽仍保持有效；請先修復瀏覽器儲存問題');
+        }
+      });
+      leaveResult();
+      toast(`已作廢第 ${r.seq} 抽，「${r.prizeName}」多出 1 個名額可以重抽。`);
+    } catch (err) {
+      toast(`無法作廢第 ${r.seq} 抽：${err.message || err}`, { tone: 'error', timeout: 0 });
+    } finally {
+      voiding = false;
       renderAll();
       syncStage();
-      toast('作廢狀態無法保存，這一抽仍保持有效；請先修復瀏覽器儲存問題。', { tone: 'error', timeout: 0 });
-      return;
     }
-    leaveResult();
-    renderAll();
-    syncStage();
-    toast(`已作廢第 ${r.seq} 抽，「${r.prizeName}」多出 1 個名額可以重抽。`);
   });
 
   function openReset() {

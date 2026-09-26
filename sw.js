@@ -1,5 +1,5 @@
 /* The complete app shell is cached as one version. Bump this name whenever a shell file changes. */
-const CACHE_NAME = 'prize-shell-20260927-2';
+const CACHE_NAME = 'prize-shell-20260927-3';
 const SHELL = [
   './', 'index.html', 'verify.html', 'projection.html',
   'tokens.css', 'app.css', 'verify.css', 'projection.css',

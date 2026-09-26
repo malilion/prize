@@ -140,7 +140,7 @@ test('state reads distinguish empty, damaged, unsupported, and unavailable stora
   assert.equal(LW.Store.validState({ ...valid, prizes: [{ id: 'p' }, { id: 'p' }] }, 1), false);
 });
 
-test('draw gate rejects a second draw while Web Locks holds the session', async () => {
+test('session gate rejects a concurrent draw or void while Web Locks holds the session', async () => {
   let occupied = false;
   const gateContext = vm.createContext({
     navigator: { locks: { async request(_id, options, callback) {
@@ -158,7 +158,9 @@ test('draw gate rejects a second draw while Web Locks holds the session', async 
     await new Promise((resolve) => { release = resolve; });
   });
   while (!release) await new Promise((resolve) => setImmediate(resolve));
-  await assert.rejects(gateContext.LW.DrawGate.run('SESSION', async () => {}), /另一個分頁操作/);
+  let voidRan = false;
+  await assert.rejects(gateContext.LW.DrawGate.run('SESSION', async () => { voidRan = true; }), /另一個分頁操作/);
+  assert.equal(voidRan, false);
   release();
   await first;
   await gateContext.LW.DrawGate.run('SESSION', async () => {});
