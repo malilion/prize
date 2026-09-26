@@ -1148,17 +1148,27 @@
         downloaded: false,
       };
       await LW.Vault.update(record.id, { video: out.blob, videoMeta: { ...record.video } });
-      if (state.settings.autoDownload) {
-        LW.download(out.blob, file);
-        record.video.downloaded = true;
+      const volatile = !LW.Vault.durable;
+      let downloadError = null;
+      if (state.settings.autoDownload || volatile) {
+        try {
+          LW.download(out.blob, file);
+          record.video.downloaded = true;
+        } catch (err) {
+          downloadError = err;
+        }
       }
       const metadataSaved = persist(true);
-      if (metadataSaved) {
-        toast(state.settings.autoDownload
-          ? `第 ${record.seq} 抽的錄影已下載（${LW.formatBytes(out.blob.size)}）`
-          : `第 ${record.seq} 抽的錄影已存好，可以在「紀錄」下載`, { timeout: 4000 });
+      if (!metadataSaved) {
+        toast(`第 ${record.seq} 抽的錄影已產生，但雜湊值無法保存到瀏覽器紀錄。${downloadError ? '自動下載也失敗，請到「紀錄」手動下載。' : ''}請保持頁面開啟並立即匯出憑證包。`, { tone: 'error', timeout: 0 });
+      } else if (downloadError) {
+        toast(`第 ${record.seq} 抽的錄影無法自動下載（${downloadError.message || downloadError}）。請立即到「紀錄」手動下載。`, { tone: 'error', timeout: 0 });
+      } else if (volatile) {
+        toast(`第 ${record.seq} 抽的錄影只暫存在記憶體，已要求瀏覽器下載。請確認下載資料夾有檔案，重新整理前再匯出憑證包。`, { tone: 'error', timeout: 0 });
       } else {
-        toast(`第 ${record.seq} 抽的錄影已產生，但雜湊值無法保存到瀏覽器紀錄。請保持頁面開啟並立即匯出憑證包。`, { tone: 'error', timeout: 0 });
+        toast(state.settings.autoDownload
+          ? `第 ${record.seq} 抽的錄影已要求下載（${LW.formatBytes(out.blob.size)}）`
+          : `第 ${record.seq} 抽的錄影已存好，可以在「紀錄」下載`, { timeout: 4000 });
       }
     } catch (err) {
       record.video = { state: 'failed', error: (err && err.message) || String(err) };

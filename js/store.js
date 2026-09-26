@@ -112,7 +112,7 @@
       }
     });
     const result = opening.then((db) => {
-      Vault.durable = !!db;
+      Vault.durable = !!db && memory.size === 0;
       if (!db && dbPromise === result) dbPromise = null;
       return db;
     });
@@ -202,12 +202,15 @@
       if (db) {
         try {
           await run(db, 'readwrite', (s) => s.put(stored));
+          memory.delete(stored.id);
+          Vault.durable = memory.size === 0;
           return;
         } catch (_) {
           Vault.durable = false;
         }
       }
       memory.set(stored.id, stored);
+      Vault.durable = false;
     },
 
     async get(id) {
@@ -269,6 +272,7 @@
         });
       }
       for (const key of keys) memory.delete(key);
+      Vault.durable = !!db && memory.size === 0;
     },
 
     /** Replace all evidence in one IndexedDB transaction; used only after archive validation. */
@@ -287,6 +291,7 @@
         });
       }
       memory = replacement || new Map();
+      Vault.durable = !!db;
     },
 
     /** Ask the browser not to evict recordings under storage pressure. */

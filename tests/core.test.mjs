@@ -249,6 +249,58 @@ test('blocked IndexedDB upgrade can be retried and closes a late connection', as
   assert.equal(gateContext.LW.Vault.durable, true);
 });
 
+test('a recovered IndexedDB write replaces a stale memory fallback', async () => {
+  const data = new Map();
+  let failWrites = true;
+  const db = {
+    transaction() {
+      const tx = { error: null, oncomplete: null, onabort: null };
+      tx.objectStore = () => ({
+        put(value) {
+          queueMicrotask(() => {
+            if (failWrites) {
+              tx.error = new Error('quota');
+              tx.onabort();
+            } else {
+              data.set(value.id, value);
+              tx.oncomplete();
+            }
+          });
+          return { result: undefined };
+        },
+        get(id) {
+          const request = { result: data.get(id) };
+          queueMicrotask(() => tx.oncomplete());
+          return request;
+        },
+      });
+      return tx;
+    },
+  };
+  const vaultContext = vm.createContext({
+    indexedDB: { open() {
+      const request = { result: db };
+      queueMicrotask(() => request.onsuccess());
+      return request;
+    } },
+  });
+  vaultContext.globalThis = vaultContext;
+  vm.runInContext(readFileSync(new URL('../js/store.js', import.meta.url), 'utf8'), vaultContext);
+  const vault = vaultContext.LW.Vault;
+  await vault.put({ id: 'draw', candidates: ['甲'], video: null });
+  await vault.put({ id: 'other', candidates: ['乙'], video: null });
+  assert.equal(vault.durable, false);
+  assert.equal((await vault.get('draw')).video, null);
+  failWrites = false;
+  await vault.update('draw', { video: 'saved recording' });
+  assert.equal(vault.durable, false);
+  await vault.update('other', { video: 'second recording' });
+  assert.equal(vault.durable, true);
+  assert.equal((await vault.get('draw')).video, 'saved recording');
+  assert.equal((await vault.get('draw')).candidates[0], '甲');
+  assert.equal(data.get('draw').video, 'saved recording');
+});
+
 test('recorder rejects partial output after an encoder error and releases tracks on failure', async () => {
   function recorderWith(Recorder) {
     const track = { kind: 'video', stopped: false, stop() { this.stopped = true; } };
