@@ -1041,14 +1041,18 @@
     renderControls();
     renderSettings();
     add(canSave, '場次設定可寫入瀏覽器');
-    let missingSnapshots = 0;
+    const snapshotIssues = [];
     let missingVideos = 0;
-    for (const record of state.records) {
+    for (const [index, record] of state.records.entries()) {
+      if (index % 25 === 0) $('#preflight-results').textContent = `正在查核既有抽次 ${index + 1}/${state.records.length}…`;
       const saved = await LW.Vault.get(record.id);
-      if (!Array.isArray(saved?.candidates) || !Array.isArray(saved?.candidateKeys)) missingSnapshots++;
+      const evidence = await LW.inspectDrawEvidence(record, saved, { allowDuplicateKeys: state.rosterKeyScheme === 1 });
+      if (evidence.errors.length) snapshotIssues.push(`第 ${record.seq} 抽：${evidence.errors.join('、')}`);
       if (record.video?.state === 'ready' && !saved?.video) missingVideos++;
     }
-    add(!missingSnapshots && !missingVideos, missingSnapshots || missingVideos ? `既有紀錄缺少 ${missingSnapshots} 份候選名單或識別鍵快照、${missingVideos} 段錄影` : '既有紀錄的候選快照與錄影可取得');
+    add(!snapshotIssues.length && !missingVideos, snapshotIssues.length || missingVideos
+      ? `既有紀錄有 ${snapshotIssues.length} 份候選快照異常、${missingVideos} 段錄影無法取得${snapshotIssues.length ? `；${snapshotIssues.slice(0, 3).join('；')}${snapshotIssues.length > 3 ? '；其餘請逐抽查核' : ''}` : ''}`
+      : '既有紀錄的候選快照完整且錄影可取得');
     if (navigator.storage && navigator.storage.estimate) {
       try {
         const { usage, quota } = await navigator.storage.estimate();
@@ -1056,8 +1060,10 @@
         add(Number.isFinite(available) && available > (state.settings.record ? 250 : 1) * 1024 * 1024, Number.isFinite(available) ? `可用瀏覽器空間約 ${LW.formatBytes(Math.max(0, available))}` : '瀏覽器沒有回報可用空間');
       } catch (_) { add(false, '無法查詢可用瀏覽器空間'); }
     }
+    const stillCurrent = !staleState && freshStore();
+    add(stillCurrent, stillCurrent ? '檢查期間場次沒有被其他分頁更新' : '檢查期間場次已變更，請重新整理後再檢查');
     $('#preflight-results').innerHTML = checks.map((c) => `<li class="${c.ok ? 'check-ok' : 'check-bad'}">${c.ok ? '通過' : '注意'}：${esc(c.message)}</li>`).join('');
-    preflightCurrent = true;
+    preflightCurrent = stillCurrent;
     toast(checks.every((c) => c.ok) ? '活動前檢查通過' : `活動前檢查有 ${checks.filter((c) => !c.ok).length} 項需要處理`, { tone: checks.every((c) => c.ok) ? 'info' : 'error' });
     } catch (err) {
       const item = document.createElement('li');
@@ -1283,7 +1289,7 @@
     };
   }
 
-  function readmeText(now, draws, missing) {
+  function readmeText(now, draws, missing, snapshotIssues = []) {
     const count = (status) => state.records.filter((r) => r.status === status).length;
     const lines = [
       '抽獎憑證包　驗證說明',
@@ -1322,6 +1328,11 @@
       lines.push('', '【注意】下列錄影不在匯出時的瀏覽器中，沒有包含在這個憑證包裡，請到當時的下載資料夾尋找：');
       for (const r of missing) lines.push(`  第 ${r.seq} 抽：${r.video.file}（SHA-256 ${r.video.sha256}）`);
     }
+    if (snapshotIssues.length) {
+      lines.push('', `【注意】${snapshotIssues.length} 份候選快照與抽獎紀錄不一致或已遺失，這份憑證包無法通過完整驗證：`);
+      for (const issue of snapshotIssues.slice(0, 100)) lines.push(`  第 ${issue.seq} 抽：${issue.errors.join('；')}`);
+      if (snapshotIssues.length > 100) lines.push(`  其餘 ${snapshotIssues.length - 100} 份請在獨立驗證頁逐抽檢查。`);
+    }
     return lines.join('\r\n') + '\r\n';
   }
 
@@ -1342,12 +1353,17 @@
         const videos = [];
         const sums = [];
         const missing = [];
-        const missingSnapshots = [];
+        const snapshotIssues = [];
         const draws = [];
-        for (const r of state.records) {
+        for (const [index, r] of state.records.entries()) {
+          if (index % 25 === 0) {
+            await assertLock();
+            label.textContent = `查核抽次 ${index + 1}/${state.records.length}`;
+          }
           const snap = await LW.Vault.get(r.id);
           draws.push(auditDraw(r, snap));
-          if (!snap || !Array.isArray(snap.candidates) || !Array.isArray(snap.candidateKeys)) missingSnapshots.push(r.seq);
+          const evidence = await LW.inspectDrawEvidence(r, snap, { allowDuplicateKeys: state.rosterKeyScheme === 1 });
+          if (evidence.errors.length) snapshotIssues.push({ seq: r.seq, errors: evidence.errors });
           if (r.video && r.video.state === 'ready') {
             const file = cleanVideoFile(r.video.file); // never let a stored name leave the ZIP folder
             if (snap && snap.video) {
@@ -1362,7 +1378,7 @@
           { name: `${folder}/抽獎紀錄.json`, data: JSON.stringify(auditDoc(draws, now), null, 2) },
           { name: `${folder}/場次狀態.json`, data: JSON.stringify({ format: 'lucky-wheel-session/1', exportedAt: now.toISOString(), state }, null, 2) },
           { name: `${folder}/SHA256SUMS.txt`, data: sums.length ? `${sums.join('\n')}\n` : '' },
-          { name: `${folder}/驗證說明.txt`, data: readmeText(now, draws, missing) },
+          { name: `${folder}/驗證說明.txt`, data: readmeText(now, draws, missing, snapshotIssues) },
           ...videos,
         ];
         const zip = await LW.makeZip(entries, {
@@ -1379,9 +1395,13 @@
         exportReceiptSaved = LW.Store.setPref('lastExportReceipt', exportReceipt);
         for (const v of videos) v.record.video.downloaded = true;
         persist(true);
-        if (missing.length || missingSnapshots.length || !exportReceiptSaved) {
-          const incomplete = missing.length || missingSnapshots.length
-            ? `缺少 ${missing.length} 段錄影、${missingSnapshots.length} 份候選名單或識別鍵快照；這份備份無法通過完整驗證` : '';
+        if (missing.length || snapshotIssues.length || !exportReceiptSaved) {
+          const evidenceProblems = [
+            missing.length ? `${missing.length} 段錄影未包含` : '',
+            snapshotIssues.length ? `${snapshotIssues.length} 份候選快照異常` : '',
+          ].filter(Boolean);
+          const incomplete = evidenceProblems.length
+            ? `${evidenceProblems.join('、')}；這份備份無法通過完整驗證` : '';
           const unsaved = exportReceiptSaved ? '' : '指紋收據無法留存在瀏覽器，請立即下載文字收據';
           toast(`憑證包已下載，但${[incomplete, unsaved].filter(Boolean).join('；')}。`, { tone: 'error', timeout: 0 });
         } else {

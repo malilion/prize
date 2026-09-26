@@ -725,6 +725,8 @@ test('single-draw evidence detects missing, altered, and colliding snapshots', a
   assert.ok((await LW.inspectDrawEvidence(record, null)).errors.some((error) => error.includes('找不到')));
   assert.ok((await LW.inspectDrawEvidence(record, { ...snapshot, id: 'other' })).errors.some((error) => error.includes('找不到')));
   assert.ok((await LW.inspectDrawEvidence(record, { ...snapshot, candidates: ['甲', '丙'] })).errors.some((error) => error.includes('SHA-256')));
+  const quietlyChanged = await LW.inspectDrawEvidence(record, { ...snapshot, candidates: ['丙', '乙'] });
+  assert.deepEqual(Array.from(quietlyChanged.errors), ['候選名單 SHA-256 與抽獎紀錄不符']);
   assert.ok((await LW.inspectDrawEvidence(record, { ...snapshot, candidateKeys: null })).errors.some((error) => error.includes('識別鍵快照')));
   assert.ok((await LW.inspectDrawEvidence(record, { ...snapshot, candidateKeys: ['甲', '甲'] })).errors.some((error) => error.includes('識別鍵')));
   const legacy = await LW.inspectDrawEvidence(record, { ...snapshot, candidateKeys: ['乙', '乙'] }, { allowDuplicateKeys: true });
