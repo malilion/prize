@@ -10,13 +10,33 @@
 
   const Store = {
     stateKey: STATE_KEY,
-    load() {
+    read() {
+      let raw;
       try {
-        const raw = localStorage.getItem(STATE_KEY);
-        return raw ? JSON.parse(raw) : null;
+        raw = localStorage.getItem(STATE_KEY);
       } catch (_) {
-        return null;
+        return { status: 'unavailable', raw: null, value: null };
       }
+      if (raw === null) return { status: 'empty', raw: null, value: null };
+      try { return { status: 'ok', raw, value: JSON.parse(raw) }; }
+      catch (_) { return { status: 'corrupt', raw, value: null }; }
+    },
+    load() {
+      const result = Store.read();
+      return result.status === 'ok' ? result.value : null;
+    },
+    validState(raw, version) {
+      return !!(raw && typeof raw === 'object' && !Array.isArray(raw) && raw.v === version &&
+        raw.session && typeof raw.session.id === 'string' && raw.session.id &&
+        Array.isArray(raw.prizes) && Array.isArray(raw.records) &&
+        raw.prizes.length <= 1000 && raw.records.length <= 100000 &&
+        raw.prizes.every((prize) => prize && typeof prize === 'object' && typeof prize.id === 'string' && prize.id) &&
+        raw.records.every((record, index) => record && typeof record === 'object' &&
+          typeof record.id === 'string' && record.id && record.seq === index + 1) &&
+        new Set(raw.prizes.map((prize) => prize.id)).size === raw.prizes.length &&
+        new Set(raw.records.map((record) => record.id)).size === raw.records.length &&
+        typeof raw.people === 'string' && raw.people.length <= 2000000 &&
+        raw.settings && typeof raw.settings === 'object' && !Array.isArray(raw.settings));
     },
     save(state) {
       try {

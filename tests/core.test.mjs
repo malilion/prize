@@ -21,6 +21,25 @@ test('state store reports a failed browser write', () => {
   assert.equal(LW.Store.save({ records: [] }), true);
 });
 
+test('state reads distinguish empty, damaged, unsupported, and unavailable storage', () => {
+  context.localStorage = { getItem() { return null; } };
+  assert.equal(LW.Store.read().status, 'empty');
+  context.localStorage = { getItem() { return '{broken'; } };
+  const damaged = LW.Store.read();
+  assert.equal(damaged.status, 'corrupt');
+  assert.equal(damaged.raw, '{broken');
+  context.localStorage = { getItem() { throw new Error('denied'); } };
+  assert.equal(LW.Store.read().status, 'unavailable');
+  const valid = { v: 1, session: { id: 'SESSION' }, prizes: [], records: [], people: '', settings: {} };
+  context.localStorage = { getItem() { return JSON.stringify(valid); } };
+  assert.equal(LW.Store.read().status, 'ok');
+  assert.equal(LW.Store.validState(LW.Store.read().value, 1), true);
+  assert.equal(LW.Store.validState({ ...valid, v: 2 }, 1), false);
+  assert.equal(LW.Store.validState({ ...valid, records: null }, 1), false);
+  assert.equal(LW.Store.validState({ ...valid, records: [null] }, 1), false);
+  assert.equal(LW.Store.validState({ ...valid, prizes: [{ id: 'p' }, { id: 'p' }] }, 1), false);
+});
+
 test('draw gate rejects a second draw while Web Locks holds the session', async () => {
   let occupied = false;
   const gateContext = vm.createContext({

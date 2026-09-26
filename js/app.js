@@ -122,9 +122,8 @@
     return s;
   }
 
-  function loadState() {
-    const saved = LW.Store.load();
-    const s = saved && typeof saved === 'object' && saved.v === VERSION ? sanitizeState(saved) : sampleState();
+  function loadState(saved) {
+    const s = saved ? sanitizeState(saved) : sampleState();
     for (const r of s.records) {
       if (r.status === 'pending') {
         // The page died mid-spin. Keep the pre-drawn result on file so an interrupted draw can't vanish.
@@ -138,7 +137,8 @@
     return s;
   }
 
-  const state = loadState();
+  const initialRead = LW.Store.read();
+  const state = loadState(initialRead.status === 'ok' && LW.Store.validState(initialRead.value, VERSION) ? initialRead.value : null);
   LW.Vault.setGeneration(state.vaultGeneration);
   let phase = 'idle'; // idle → drawing → saving → result → idle
   let zipping = false;
@@ -147,23 +147,34 @@
   let saveTimer = 0;
   let storageError = false;
   let staleState = false;
-  let persistedSnapshot = JSON.stringify(LW.Store.load());
+  let storageProblem = initialRead.status === 'unavailable' ? 'unavailable'
+    : initialRead.status === 'corrupt' ? 'corrupt'
+      : initialRead.status === 'ok' && !LW.Store.validState(initialRead.value, VERSION) ? 'incompatible' : null;
+  let persistedSnapshot = initialRead.raw;
 
-  function freshStore() { return JSON.stringify(LW.Store.load()) === persistedSnapshot; }
+  function freshStore() {
+    const current = LW.Store.read();
+    return current.status !== 'unavailable' && current.raw === persistedSnapshot;
+  }
 
-  function saveSessionState(next) {
+  function saveSessionState(next, { allowRecovery = false } = {}) {
+    if (storageProblem === 'unavailable' || (storageProblem && !allowRecovery)) return false;
     if (staleState || !freshStore()) {
       staleState = true;
       return false;
     }
     const saved = LW.Store.save(next);
-    if (saved) persistedSnapshot = JSON.stringify(next);
+    if (saved) {
+      persistedSnapshot = JSON.stringify(next);
+      storageProblem = null;
+    }
     return saved;
   }
 
   function persist(now = false) {
     clearTimeout(saveTimer);
     const write = () => {
+      if (storageProblem) return false;
       if (staleState || !freshStore()) {
         if (!staleState) toast('另一個分頁已更新此場次。請重新整理，以免覆蓋較新的抽獎紀錄。', { tone: 'error', timeout: 0 });
         staleState = true;
@@ -231,6 +242,7 @@
   }
 
   function drawBlocker() {
+    if (storageProblem) return '儲存的場次無法安全讀取，請先下載原始資料或還原備份';
     if (staleState || !freshStore()) return '另一個分頁已更新此場次，請重新整理後再抽獎';
     if (storageError) return '無法保存抽獎紀錄，請檢查瀏覽器的儲存權限或可用空間';
     if (!state.prizes.length) return '先到「獎池」新增獎項';
@@ -260,6 +272,9 @@
     sound: $('#sound-toggle'),
     present: $('#present-toggle'),
     sessionId: $('#session-id'),
+    stateAlert: $('#state-alert'),
+    stateAlertMessage: $('#state-alert-message'),
+    stateAlertDownload: $('#state-alert-download'),
     sampleNotice: $('#sample-notice'),
     prizeList: $('#prize-list'),
     prizeSummary: $('#prize-summary'),
@@ -370,6 +385,7 @@
   /* =================================================================== rendering */
 
   function renderAll() {
+    renderStateAlert();
     renderControls();
     renderTabs();
     renderPrizes();
@@ -377,11 +393,25 @@
     renderRecords();
     renderSettings();
     el.sessionId.textContent = state.session.id;
-    el.sampleNotice.hidden = !state.sample;
-    $$('.lockable').forEach((fs) => { fs.disabled = busy() || (!!fs.closest('#pane-people') && rosterLocked()); });
-    $('#sample-clear').disabled = busy();
-    $('#reset-open').disabled = busy();
-    for (const id of ['preflight', 'rehearse', 'backup-export', 'backup-import']) $(`#${id}`).disabled = busy();
+    el.sampleNotice.hidden = !state.sample || !!storageProblem;
+    $$('.lockable').forEach((fs) => { fs.disabled = busy() || !!storageProblem || (!!fs.closest('#pane-people') && rosterLocked()); });
+    $('#sample-clear').disabled = busy() || !!storageProblem;
+    $('#reset-open').disabled = busy() || !!storageProblem;
+    $('#rehearse').disabled = busy() || !!storageProblem;
+    $('#backup-export').disabled = busy() || !!storageProblem;
+    for (const id of ['preflight', 'backup-import']) $(`#${id}`).disabled = busy();
+    el.sound.disabled = !!storageProblem;
+  }
+
+  function renderStateAlert() {
+    el.stateAlert.hidden = !storageProblem;
+    if (!storageProblem) return;
+    el.stateAlertMessage.textContent = storageProblem === 'unavailable'
+      ? '無法讀取瀏覽器儲存空間。已暫停抽獎與寫入；檢查瀏覽器權限後按「重新讀取」。'
+      : storageProblem === 'corrupt'
+        ? '原場次資料無法解析，已暫停寫入。請先下載原始資料，再到「設定 → 場次移轉」還原有效備份。'
+        : '原場次格式與這個版本不相容，已暫停寫入。請使用建立場次的新版程式，或先下載原始資料再還原備份。';
+    el.stateAlertDownload.hidden = initialRead.raw === null;
   }
 
   function renderControls() {
@@ -407,7 +437,7 @@
           `${esc(prizeLabel(p))}（${left ? `剩 ${left}/${p.qty}` : '已抽完'}）</option>`;
       }).join('')
       : '<option value="">尚未設定獎項</option>';
-    el.prizeSelect.disabled = isBusy || !state.prizes.length;
+    el.prizeSelect.disabled = isBusy || !!storageProblem || !state.prizes.length;
   }
 
   function renderTabs() {
@@ -599,7 +629,7 @@
       ? `錄影格式：${format}・1920×1080・30 fps。錄下的就是轉盤畫面（含音效），從開始前 1 秒錄到結果後 3 秒。`
       : '這個瀏覽器不支援錄影，請改用最新版 Chrome、Edge 或 Safari。';
     el.recordSupport.classList.toggle('is-warning', !format);
-    el.retryStorage.hidden = !storageError;
+    el.retryStorage.hidden = !storageError || !!storageProblem;
     renderStorageInfo();
   }
 
@@ -859,7 +889,8 @@
     await LW.Vault.ready();
     await recoverRecordings();
     add(LW.Vault.durable, '錄影與候選快照可長期保存於此瀏覽器');
-    const canSave = persist(true);
+    add(!storageProblem, storageProblem ? '原場次資料無法安全讀取，請先依上方提示處理' : '原場次資料可安全讀取');
+    const canSave = storageProblem ? false : persist(true);
     storageError = !canSave;
     renderControls();
     renderSettings();
@@ -1036,6 +1067,10 @@
 
   function exportCSV() {
     if (!state.records.length) return;
+    if (storageProblem || staleState || !freshStore()) {
+      toast('場次資料已變更或無法安全讀取，請重新整理後再匯出中獎名單。', { tone: 'error' });
+      return;
+    }
     const blob = new Blob([LW.toCSV(csvRows())], { type: 'text/csv;charset=utf-8' });
     LW.download(blob, `中獎名單_${eventSlug()}_${LW.fileStamp()}.csv`);
   }
@@ -1137,7 +1172,7 @@
     try {
       await LW.DrawGate.run(state.session.id, async (assertLock) => {
         await assertLock();
-        if (staleState || !freshStore()) throw new Error('另一個分頁已更新此場次，請重新整理後再匯出');
+        if (storageProblem || staleState || !freshStore()) throw new Error('場次資料已變更或無法安全讀取，請重新整理後再匯出');
         const now = new Date();
         const folder = LW.safeFilename(`抽獎憑證包_${eventSlug()}_${LW.fileStamp(now)}`, 80);
         const videos = [];
@@ -1173,7 +1208,7 @@
         label.textContent = '計算整包指紋';
         const packageHash = await LW.sha256Hex(zip);
         await assertLock();
-        if (staleState || !freshStore()) throw new Error('打包期間另一個分頁更新了場次，請重新整理後重新匯出');
+        if (storageProblem || staleState || !freshStore()) throw new Error('打包期間場次資料已變更，請重新整理後重新匯出');
         LW.download(zip, `${folder}.zip`);
         $('#export-hash-value').textContent = packageHash;
         $('#export-hash').hidden = false;
@@ -1213,7 +1248,7 @@
         new Set(s.records.map((r) => r.id)).size !== s.records.length) throw new Error('場次狀態資料不完整、識別碼重複或超出限制');
       inspectedBackup = result;
       const missing = result.warnings.filter((line) => line.includes('錄影未包含')).length;
-      $('#restore-summary').textContent = `活動：${s.title || '未命名'}；場次：${s.session.id}；${s.prizes.length} 項獎品、${s.records.length} 抽。${missing ? `${missing} 段錄影缺少，只能還原紀錄。` : '錄影齊全。'}`;
+      $('#restore-summary').textContent = `活動：${s.title || '未命名'}；場次：${s.session.id}；${s.prizes.length} 項獎品、${s.records.length} 抽。${missing ? `${missing} 段錄影缺少，只能還原紀錄。` : '錄影齊全。'}${storageProblem ? ' 目前儲存的場次無法讀取；還原會取代原始資料，建議先下載原始資料。' : ''}`;
       $('#restore-confirm').value = '';
       $('#restore-go').disabled = true;
       openDialog($('#dlg-restore'));
@@ -1244,7 +1279,7 @@
       await LW.DrawGate.run(state.session.id, async (assertLock) => {
         await assertLock();
         if (!freshStore()) throw new Error('另一個分頁已更新此場次，請重新整理後再還原');
-        await LW.replaceSession(state, restored, incoming, { store: { save: saveSessionState } });
+        await LW.replaceSession(state, restored, incoming, { store: { save: (next) => saveSessionState(next, { allowRecovery: true }) } });
       });
       Object.assign(state, restored);
       peopleCache = { text: null, list: [] };
@@ -1817,6 +1852,11 @@
   $('#rehearse').addEventListener('click', rehearse);
   $('#backup-export').addEventListener('click', () => exportPackage(true));
   $('#backup-import').addEventListener('click', () => { if (!busy()) $('#file-restore').click(); });
+  el.stateAlertDownload.addEventListener('click', () => {
+    if (initialRead.raw === null) return;
+    LW.download(new Blob([initialRead.raw], { type: 'text/plain;charset=utf-8' }), `抽獎場次原始資料_${LW.fileStamp()}.txt`);
+  });
+  $('#state-alert-reload').addEventListener('click', () => window.location.reload());
   $('#file-restore').addEventListener('change', () => {
     const file = $('#file-restore').files[0];
     $('#file-restore').value = '';

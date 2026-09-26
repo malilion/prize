@@ -71,6 +71,15 @@
         <p class="panel__session">場次 <span class="mono" id="session-id">—</span></p>
       </header>
 
+      <div class="notice notice--danger" id="state-alert" role="alert" hidden>
+        <strong>場次資料需要處理</strong>
+        <p id="state-alert-message"></p>
+        <div class="row">
+          <button class="btn btn--sm" id="state-alert-download" type="button">下載原始資料</button>
+          <button class="btn btn--sm btn--ghost" id="state-alert-reload" type="button">重新讀取</button>
+        </div>
+      </div>
+
       <div class="notice" id="sample-notice" hidden>
         <p>目前是範例資料。換成你的獎項和名單，就能正式抽獎。</p>
         <button class="btn btn--sm" id="sample-clear" type="button">清除範例資料</button>
