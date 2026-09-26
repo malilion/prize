@@ -26,7 +26,7 @@
       v: VERSION,
       title: SAMPLE.title,
       session: newSession(),
-      prizes: SAMPLE.prizes.map(([name, qty]) => ({ id: LW.uid('prize'), name, qty })),
+      prizes: SAMPLE.prizes.map(([name, qty]) => ({ id: LW.uid('prize'), name, qty, eligibleGroup: '', repeatPolicy: 'inherit' })),
       currentPrizeId: null,
       people: SAMPLE.people,
       records: [],
@@ -63,6 +63,8 @@
         id: str(p && p.id, 64) || LW.uid('prize'),
         name: str(p && p.name, 40),
         qty: int(p && p.qty, 1, 999, 1),
+        eligibleGroup: str(p && p.eligibleGroup, 40).trim(),
+        repeatPolicy: ['inherit', 'allow', 'exclude'].includes(p && p.repeatPolicy) ? p.repeatPolicy : 'inherit',
       })),
       currentPrizeId: raw.currentPrizeId == null ? null : str(raw.currentPrizeId, 64),
       people: str(raw.people, 2000000),
@@ -106,6 +108,11 @@
         voidReason: r.voidReason == null ? undefined : str(r.voidReason, 60),
         voidAt: r.voidAt == null ? undefined : isoOr(r.voidAt, now),
         returnToPool: !!r.returnToPool,
+        rule: r.rule && typeof r.rule === 'object' ? {
+          eligibleGroup: str(r.rule.eligibleGroup, 40).trim(),
+          repeatPolicy: ['inherit', 'allow', 'exclude'].includes(r.rule.repeatPolicy) ? r.rule.repeatPolicy : 'inherit',
+          allowRepeat: !!r.rule.allowRepeat,
+        } : undefined,
         abortReason: r.abortReason == null ? undefined : str(r.abortReason, 200),
         video,
       });
@@ -133,6 +140,7 @@
   let phase = 'idle'; // idle → drawing → saving → result → idle
   let zipping = false;
   let clearing = false;
+  let checking = false;
   let saveTimer = 0;
   let storageError = false;
 
@@ -157,36 +165,24 @@
   /* ----- derived data ----- */
 
   let peopleCache = { text: null, list: [] };
-  /** One entry per non-empty line. Repeated names get their own key (陳怡君, 陳怡君#2). */
+  /** One entry per non-empty line. Repeated identities get an ordinal key. */
   function people() {
     if (peopleCache.text === state.people) return peopleCache.list;
-    const seen = new Map();
-    const list = [];
-    for (const line of state.people.split(/\r?\n/)) {
-      const name = line.replace(/\s+/g, ' ').trim();
-      if (!name) continue;
-      const n = (seen.get(name) || 0) + 1;
-      seen.set(name, n);
-      list.push({ name, key: n > 1 ? `${name}#${n}` : name });
-    }
+    const list = LW.parsePeople(state.people);
     peopleCache = { text: state.people, list };
     return list;
   }
 
   function duplicateNames() {
     const counts = new Map();
-    for (const p of people()) counts.set(p.name, (counts.get(p.name) || 0) + 1);
+    for (const p of people()) {
+      const identity = p.group ? `${p.name} | ${p.group}` : p.name;
+      counts.set(identity, (counts.get(identity) || 0) + 1);
+    }
     return [...counts].filter(([, n]) => n > 1).map(([name, count]) => ({ name, count }));
   }
 
-  /** Who wins something stays out; a voided winner stays out unless they were put back. */
-  const holdsPrize = (r) => r.status === 'valid' || (r.status === 'void' && !r.returnToPool);
-
-  function candidates() {
-    if (state.settings.allowRepeat) return people();
-    const out = new Set(state.records.filter(holdsPrize).map((r) => r.key));
-    return people().filter((p) => !out.has(p.key));
-  }
+  function candidates(prize = currentPrize()) { return LW.eligiblePeople(people(), state.records, prize, state.settings); }
 
   const STATUS_LABEL = { valid: '有效', void: '作廢', aborted: '中斷', pending: '進行中' };
 
@@ -198,7 +194,7 @@
   const allDrawn = () => state.prizes.length > 0 && state.prizes.every((p) => remaining(p) === 0);
   /** Valid winners of a prize, newest first. */
   const winnersOf = (id) => state.records.filter((r) => r.prizeId === id && r.status === 'valid').map((r) => r.name).reverse();
-  const busy = () => phase === 'drawing' || phase === 'saving' || zipping || clearing;
+  const busy = () => phase === 'drawing' || phase === 'saving' || phase === 'rehearsal' || zipping || clearing || checking;
   const rosterLocked = () => state.records.length > 0;
   const readyVideos = () => state.records.filter((r) => r.video && r.video.state === 'ready');
 
@@ -216,9 +212,10 @@
     if (allDrawn()) return '所有獎項都已抽出';
     const prize = currentPrize();
     if (!prize) return '請選擇本輪獎項';
+    if (!prize.name.trim()) return '請先為本輪獎項輸入名稱';
     if (remaining(prize) === 0) return `「${prizeLabel(prize)}」已經抽完，請改選其他獎項`;
     if (!people().length) return '先到「名單」加入抽獎人員';
-    if (!candidates().length) return '名單上已經沒有可以抽的人';
+    if (!candidates().length) return prize.eligibleGroup ? `「${prizeLabel(prize)}」的「${prize.eligibleGroup}」組已沒有符合規則的人` : '名單上已經沒有可以抽的人';
     if (state.settings.record && !LW.Recorder.supported()) {
       return '這個瀏覽器不能錄影：請改用最新版 Chrome、Edge 或 Safari，或到「設定」關閉自動錄影';
     }
@@ -233,6 +230,7 @@
     spin: $('#spin'),
     spinLabel: $('#spin .btn__label'),
     spinHint: $('#spin-hint'),
+    stageText: $('#stage-text'),
     prizeSelect: $('#prize-select'),
     sound: $('#sound-toggle'),
     present: $('#present-toggle'),
@@ -271,6 +269,21 @@
 
   const stage = new LW.Stage(el.canvas);
   stage.onTick = () => LW.Sound.tick();
+  let projectionWindow = null;
+  stage.onFrame = (canvas, view) => {
+    if (!projectionWindow || projectionWindow.closed) return;
+    try {
+      const doc = projectionWindow.document;
+      const mirror = doc.getElementById('projection-canvas');
+      if (!mirror) return;
+      mirror.getContext('2d', { alpha: false }).drawImage(canvas, 0, 0);
+      const status = doc.getElementById('projection-status');
+      const next = `${view.prize ? view.prize.name : '尚無獎項'} · ${view.readout?.text || view.readout?.label || ''}`;
+      if (status && status.textContent !== next) status.textContent = next;
+      const aria = `抽獎投影。${next}`;
+      if (mirror.getAttribute('aria-label') !== aria) mirror.setAttribute('aria-label', aria);
+    } catch (_) { projectionWindow = null; }
+  };
   LW.Sound.setEnabled(state.settings.sound);
 
   const icon = (name) => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
@@ -343,6 +356,7 @@
     $$('.lockable').forEach((fs) => { fs.disabled = busy() || (!!fs.closest('#pane-people') && rosterLocked()); });
     $('#sample-clear').disabled = busy();
     $('#reset-open').disabled = busy();
+    for (const id of ['preflight', 'rehearse', 'backup-export', 'backup-import']) $(`#${id}`).disabled = busy();
   }
 
   function renderControls() {
@@ -350,11 +364,16 @@
     const blocker = isBusy ? null : drawBlocker();
     el.spin.disabled = isBusy || !!blocker;
     el.spin.setAttribute('aria-busy', String(isBusy));
-    el.spinLabel.textContent = phase === 'drawing' ? '抽獎中' : phase === 'saving' ? '儲存錄影' : zipping ? '憑證包打包中' : clearing ? '正在清除場次' : '開始抽獎';
+    el.spinLabel.textContent = phase === 'drawing' ? '抽獎中' : phase === 'saving' ? '儲存錄影' : phase === 'rehearsal' ? '預演中' : zipping ? '憑證包打包中' : clearing ? '正在處理場次' : checking ? '檢查中' : '開始抽獎';
     el.spinHint.textContent = blocker ||
       (phase === 'drawing' && state.settings.record ? '錄影中，請不要切換分頁或關閉視窗' :
-        phase === 'saving' ? '正在儲存這一抽的錄影…' : zipping ? '請等憑證包打包完成' : clearing ? '請等場次清除完成' : '按空白鍵也能開始');
+        phase === 'saving' ? '正在儲存這一抽的錄影…' : zipping ? '請等憑證包打包完成' : clearing ? '請等場次處理完成' : checking ? '活動前檢查進行中' : '按空白鍵也能開始');
     el.spinHint.classList.toggle('is-warning', !!blocker);
+    const last = state.records[state.records.length - 1];
+    el.stageText.textContent = phase === 'drawing' ? `第 ${last?.status === 'pending' ? last.seq : state.records.length + 1} 抽轉盤轉動中；結果完成後會公布。`
+      : (phase === 'saving' || phase === 'result') && last ? `第 ${last.seq} 抽，${last.prizeName}：${last.name}。錄影狀態：${last.video?.state === 'ready' ? '已儲存' : last.video?.state === 'failed' ? '失敗' : '處理中'}。`
+        : phase === 'rehearsal' ? '預演中。這次不會寫入紀錄或占用名額。'
+          : `本輪獎項：${currentPrize() ? prizeLabel(currentPrize()) : '未設定'}；目前可抽 ${candidates().length} 人。${blocker || ''}`;
 
     el.prizeSelect.innerHTML = state.prizes.length
       ? state.prizes.map((p) => {
@@ -378,6 +397,7 @@
     const drawn = drawnCount(p.id);
     const isCurrent = p.id === state.currentPrizeId && remaining(p) > 0;
     const label = esc(prizeLabel(p));
+    const ruleLocked = state.records.some((r) => r.prizeId === p.id);
     return `<li class="prize" data-id="${esc(p.id)}">
       <div class="prize__line">
         <span class="prize__index mono" aria-hidden="true">${i + 1}</span>
@@ -388,6 +408,14 @@
             value="${p.qty}" aria-label="「${label}」的名額">
           <span aria-hidden="true">名</span>
         </label>
+      </div>
+      <div class="prize__rules">
+        <label>限定組別 <input class="input" data-field="group" value="${esc(p.eligibleGroup || '')}" maxlength="40" placeholder="全部組別" aria-label="「${label}」限定組別"${ruleLocked ? ' disabled' : ''}></label>
+        <label>曾中獎者 <select class="input select" data-field="repeat" aria-label="「${label}」曾中獎者規則"${ruleLocked ? ' disabled' : ''}>
+          <option value="inherit"${!p.repeatPolicy || p.repeatPolicy === 'inherit' ? ' selected' : ''}>依名單設定</option>
+          <option value="exclude"${p.repeatPolicy === 'exclude' ? ' selected' : ''}>排除</option>
+          <option value="allow"${p.repeatPolicy === 'allow' ? ' selected' : ''}>可參加</option>
+        </select></label>
       </div>
       <div class="prize__line prize__meta">
         <span class="prize__status">
@@ -435,7 +463,7 @@
     el.peopleSummary.textContent = all.length ? `共 ${all.length} 人・可抽 ${pool.length} 人` : '名單是空的';
     if (dups.length) {
       const sample = dups.slice(0, 3).map((d) => `${d.name}×${d.count}`).join('、');
-      el.peopleHelp.textContent = `有 ${dups.length} 個名字重複（${sample}${dups.length > 3 ? '…' : ''}），重複的名字會各自參加抽獎。`;
+      el.peopleHelp.textContent = `有 ${dups.length} 個姓名與組別組合重複（${sample}${dups.length > 3 ? '…' : ''}），重複項目會各自參加抽獎。`;
     } else {
       el.peopleHelp.textContent = '可以加上編號或部門，例如「A001 陳怡君」。';
     }
@@ -566,7 +594,7 @@
     }
     el.storageInfo.classList.toggle('is-warning', pending > 0);
     el.storageInfo.textContent = videos.length
-      ? `這台電腦的瀏覽器裡存有 ${videos.length} 段錄影（${LW.formatBytes(bytes)}）${pending ? `，其中 ${pending} 段還沒下載` : '，都已下載'}。`
+      ? `紀錄標示 ${videos.length} 段錄影（${LW.formatBytes(bytes)}）${pending ? `，其中 ${pending} 段尚未標記為已下載` : '，都已標記為已下載'}。播放或匯出時會再確認檔案是否仍在瀏覽器中。`
       : '錄影會同時存在這台電腦的瀏覽器裡，重新整理也不會消失。';
   }
 
@@ -690,6 +718,7 @@
         drawnAt: new Date().toISOString(),
         status: 'pending',
         video: recorder ? { state: 'recording' } : { state: 'none' },
+        rule: { eligibleGroup: prize.eligibleGroup || '', repeatPolicy: prize.repeatPolicy || 'inherit', allowRepeat: prize.repeatPolicy === 'allow' || (prize.repeatPolicy !== 'exclude' && state.settings.allowRepeat) },
       };
       state.records.push(record);
       if (!persist(true)) {
@@ -697,7 +726,7 @@
         record = null;
         throw Object.assign(new Error('無法保存這一抽的預定結果，抽獎沒有開始。請檢查瀏覽器的儲存權限或可用空間。'), { beforeDraw: true });
       }
-      snapshotSaved = LW.Vault.put({ id: record.id, candidates: names, video: null });
+      snapshotSaved = LW.Vault.put({ id: record.id, candidates: names, candidateKeys: pool.map((p) => p.key), video: null });
       await snapshotSaved;
 
       await LW.wait(PREROLL_MS);
@@ -744,6 +773,107 @@
     ensureCurrentPrize();
     persist();
     renderAll();
+  }
+
+  async function runPreflight() {
+    if (busy()) return;
+    checking = true;
+    renderAll();
+    try {
+    const checks = [];
+    const add = (ok, message) => checks.push({ ok, message });
+    add(!state.sample, state.sample ? '目前仍是範例資料' : '已使用正式資料');
+    add(state.prizes.length > 0 && state.prizes.every((p) => p.name.trim() && p.qty > 0), '獎項名稱與名額完整');
+    add(people().length > 0, `名單有 ${people().length} 人`);
+    const duplicates = duplicateNames();
+    add(!duplicates.length, duplicates.length ? `${duplicates.length} 個名字重複，請確認是否為不同的人` : '名單沒有完全相同的名字');
+    const slots = state.prizes.reduce((n, p) => n + remaining(p), 0);
+    for (const prize of state.prizes) add(candidates(prize).length >= remaining(prize), `「${prizeLabel(prize)}」可抽 ${candidates(prize).length} 人、尚有 ${remaining(prize)} 個名額`);
+    const allExclude = state.prizes.every((p) => p.repeatPolicy === 'exclude' || (p.repeatPolicy !== 'allow' && !state.settings.allowRepeat));
+    if (allExclude) add(people().length >= slots, `尚有 ${slots} 個名額、名單共 ${people().length} 人（跨組別名額請另行核對）`);
+    add(!state.settings.record || LW.Recorder.supported(), '此瀏覽器可執行目前的錄影設定');
+    await LW.Vault.ready();
+    add(LW.Vault.durable, '錄影與候選快照可長期保存於此瀏覽器');
+    const canSave = LW.Store.save(state);
+    storageError = !canSave;
+    renderControls();
+    renderSettings();
+    add(canSave, '場次設定可寫入瀏覽器');
+    let missingSnapshots = 0;
+    let missingVideos = 0;
+    for (const record of state.records) {
+      const saved = await LW.Vault.get(record.id);
+      if (!saved?.candidates) missingSnapshots++;
+      if (record.video?.state === 'ready' && !saved?.video) missingVideos++;
+    }
+    add(!missingSnapshots && !missingVideos, missingSnapshots || missingVideos ? `既有紀錄缺少 ${missingSnapshots} 份候選快照、${missingVideos} 段錄影` : '既有紀錄的候選快照與錄影可取得');
+    if (navigator.storage && navigator.storage.estimate) {
+      try {
+        const { usage, quota } = await navigator.storage.estimate();
+        const available = quota - usage;
+        add(Number.isFinite(available) && available > (state.settings.record ? 250 : 1) * 1024 * 1024, Number.isFinite(available) ? `可用瀏覽器空間約 ${LW.formatBytes(Math.max(0, available))}` : '瀏覽器沒有回報可用空間');
+      } catch (_) { add(false, '無法查詢可用瀏覽器空間'); }
+    }
+    $('#preflight-results').innerHTML = checks.map((c) => `<li class="${c.ok ? 'check-ok' : 'check-bad'}">${c.ok ? '通過' : '注意'}：${esc(c.message)}</li>`).join('');
+    toast(checks.every((c) => c.ok) ? '活動前檢查通過' : `活動前檢查有 ${checks.filter((c) => !c.ok).length} 項需要處理`, { tone: checks.every((c) => c.ok) ? 'info' : 'error' });
+    } catch (err) {
+      toast(`活動前檢查未完成：${err.message || err}`, { tone: 'error' });
+    } finally {
+      checking = false;
+      renderAll();
+    }
+  }
+
+  async function rehearse() {
+    if (busy()) return;
+    LW.Sound.unlock();
+    leaveResult();
+    const blocker = drawBlocker();
+    if (blocker) { toast(blocker, { tone: 'error' }); return; }
+    const prize = currentPrize();
+    const names = candidates().map((p) => p.name);
+    phase = 'rehearsal';
+    renderAll();
+    let probe = null;
+    try {
+      stage.clearResult();
+      stage.setLabels(names);
+      stage.setView({
+        title: `預演 · ${state.title.trim()}`,
+        drawNo: state.records.length + 1,
+        sessionId: state.session.id,
+        candidateCount: names.length,
+        fingerprint: await LW.sha256Hex(names.join('\n')),
+        prize: { name: prizeLabel(prize), total: prize.qty, remaining: remaining(prize) },
+        prizeWinners: winnersOf(prize.id),
+        readout: { label: '預演，不計入紀錄', text: null, tone: 'muted' },
+      });
+      if (state.settings.record) {
+        probe = LW.Recorder.start(el.canvas, { audioTrack: LW.Sound.track() });
+        stage.setRecording(probe.startedAt);
+      }
+      await stage.spinTo(Math.floor(names.length / 2), Math.min(5000, state.settings.spinSeconds * 1000));
+      stage.setView({ readout: { label: '預演完成，不計入紀錄', text: null, tone: 'muted' } });
+      if (probe) {
+        const testVideo = await probe.stop();
+        if (!testVideo.blob.size) throw new Error('預演錄影沒有產生檔案');
+        probe = null;
+        stage.setRecording(null);
+      }
+      announce('預演完成。抽獎紀錄與獎項名額沒有變動。');
+      toast(state.settings.record ? '預演完成；轉盤與錄影功能可用，紀錄沒有變動。' : '預演完成；轉盤流程可用，紀錄沒有變動。');
+      await LW.wait(1500);
+    } catch (err) {
+      if (probe) probe.cancel();
+      toast(`預演失敗：${err.message || err}`, { tone: 'error' });
+    } finally {
+      stage.setRecording(null);
+      phase = 'idle';
+      stage.clearResult();
+      stage.setLabels([]);
+      renderAll();
+      syncStage();
+    }
   }
 
   async function finishRecording(record, recorder, snapshotSaved) {
@@ -822,6 +952,9 @@
       candidateCount: r.candidateCount,
       candidatesSha256: r.candidatesHash,
       candidates: snap && snap.candidates ? snap.candidates : null,
+      candidateKeys: snap && snap.candidateKeys ? snap.candidateKeys : null,
+      winnerKey: r.key,
+      eligibility: r.rule || null,
       status: r.status,
     };
     if (r.status === 'void') entry.void = { reason: r.voidReason || '', at: r.voidAt, returnedToPool: !!r.returnToPool };
@@ -840,11 +973,12 @@
       method: {
         random: 'Web Crypto crypto.getRandomValues()，以拒絕取樣產生均勻整數（沒有模數偏差）。winnerIndex 是中獎者在 candidates 裡的位置，從 0 起算。',
         candidatesSha256: 'SHA-256(UTF-8(candidates 依轉盤順序以換行字元 \\n 連接))，與錄影畫面下方的「名單指紋」相同。',
-        eligibility: state.settings.allowRepeat ? '允許重複中獎（匯出當下的設定）' : '中獎者（含作廢但未放回名單的人）不參加之後的抽獎（匯出當下的設定）',
+        eligibility: '每抽的 eligibility 保存限定組別與曾中獎者規則；candidateKeys 保存實際候選人的識別鍵。',
         recording: '每一抽自動錄下 1920×1080 的轉盤畫面，從轉動前 1 秒錄到結果後 3 秒；檔案的 SHA-256 記在 video.sha256。',
       },
-      prizes: state.prizes.map((p) => ({ name: prizeLabel(p), quantity: p.qty, drawn: drawnCount(p.id) })),
+      prizes: state.prizes.map((p) => ({ id: p.id, name: prizeLabel(p), quantity: p.qty, eligibleGroup: p.eligibleGroup || '', repeatPolicy: p.repeatPolicy || 'inherit', drawn: drawnCount(p.id) })),
       participants: people().map((p) => p.name),
+      participantDetails: people().map((p) => ({ name: p.name, group: p.group, key: p.key })),
       draws,
     };
   }
@@ -863,6 +997,7 @@
       '【內容】',
       '中獎名單.csv　每一抽的獎項、中獎者、時間、錄影檔名與 SHA-256，可直接用 Excel 開啟。',
       '抽獎紀錄.json　完整稽核紀錄，含每一抽當下的候選名單（candidates）。',
+      '場次狀態.json　完整場次設定、獎項、名單與抽獎紀錄，可在「設定 → 還原場次備份」讀取。',
       '錄影/　　　　　每一抽的完整錄影，畫面下方顯示場次、抽次、候選人數、名單指紋與時間。',
       'SHA256SUMS.txt　所有錄影檔的 SHA-256 雜湊值。',
       '',
@@ -874,11 +1009,13 @@
       '    Get-FileHash -Algorithm SHA256 .\\錄影\\<檔名>',
       '  把結果和 SHA256SUMS.txt 或 中獎名單.csv 裡的值比對。',
       '也可以在抽獎轉盤的「紀錄 → 驗證錄影檔」選擇影片，自動比對。',
+      '整包驗證：在抽獎轉盤程式資料夾開啟 verify.html，選擇這份 ZIP，可在離線電腦上檢查候選名單、結果與錄影。',
       '',
       '【確認候選名單】',
       '錄影畫面下方的「名單指紋」是那一抽候選名單的 SHA-256 前後各 8 碼。',
       '把 抽獎紀錄.json 中該抽的 candidates 依序以換行字元連接（最後不加換行）後計算 SHA-256，',
       '結果應與 candidatesSha256 完全相同；winnerIndex 指出中獎者在名單中的位置（從 0 起算）。',
+      '驗證只確認憑證包內部一致性；若整包被重建，仍需與活動當時公開的雜湊值比對。',
     ];
     if (missing.length) {
       lines.push('', '【注意】下列錄影不在匯出時的瀏覽器中，沒有包含在這個憑證包裡，請到當時的下載資料夾尋找：');
@@ -887,8 +1024,8 @@
     return lines.join('\r\n') + '\r\n';
   }
 
-  async function exportPackage() {
-    if (zipping || busy() || !state.records.length) return;
+  async function exportPackage(force = false) {
+    if (zipping || busy() || (!force && !state.records.length)) return;
     zipping = true;
     renderAll();
     const label = el.exportZip.querySelector('.btn__label');
@@ -901,13 +1038,16 @@
       const videos = [];
       const sums = [];
       const missing = [];
+      const missingSnapshots = [];
       const draws = [];
       for (const r of state.records) {
         const snap = await LW.Vault.get(r.id);
         draws.push(auditDraw(r, snap));
+        if (!snap || !snap.candidates) missingSnapshots.push(r.seq);
         if (r.video && r.video.state === 'ready') {
           const file = cleanVideoFile(r.video.file); // never let a stored name leave the ZIP folder
           if (snap && snap.video) {
+            if (await LW.sha256Hex(snap.video) !== r.video.sha256) throw new Error(`第 ${r.seq} 抽的錄影與原始 SHA-256 不符`);
             sums.push(`${r.video.sha256}  錄影/${file}`);
             videos.push({ name: `${folder}/錄影/${file}`, data: snap.video, record: r });
           } else missing.push(r);
@@ -916,6 +1056,7 @@
       const entries = [
         { name: `${folder}/中獎名單.csv`, data: LW.toCSV(csvRows()) },
         { name: `${folder}/抽獎紀錄.json`, data: JSON.stringify(auditDoc(draws, now), null, 2) },
+        { name: `${folder}/場次狀態.json`, data: JSON.stringify({ format: 'lucky-wheel-session/1', exportedAt: now.toISOString(), state }, null, 2) },
         { name: `${folder}/SHA256SUMS.txt`, data: sums.length ? `${sums.join('\n')}\n` : '' },
         { name: `${folder}/驗證說明.txt`, data: readmeText(now, draws, missing) },
         ...videos,
@@ -927,8 +1068,8 @@
       LW.download(zip, `${folder}.zip`);
       for (const v of videos) v.record.video.downloaded = true;
       persist(true);
-      if (missing.length) {
-        toast(`憑證包已下載，但有 ${missing.length} 段錄影不在這個瀏覽器裡，清單寫在「驗證說明.txt」。`, { tone: 'error', timeout: 0 });
+      if (missing.length || missingSnapshots.length) {
+        toast(`憑證包已下載，但缺少 ${missing.length} 段錄影、${missingSnapshots.length} 份候選快照；這份備份無法通過完整驗證。`, { tone: 'error', timeout: 0 });
       } else {
         toast(`憑證包已下載（${LW.formatBytes(zip.size)}）`);
       }
@@ -940,6 +1081,76 @@
       label.textContent = '匯出憑證包';
       renderAll();
       renderStorageInfo();
+    }
+  }
+
+  let inspectedBackup = null;
+  async function chooseBackup(file) {
+    if (!file || busy()) return;
+    clearing = true;
+    renderAll();
+    try {
+      const result = await LW.inspectPackage(file);
+      if (result.errors.length) throw new Error(result.errors.slice(0, 3).join('；'));
+      if (!result.state) throw new Error('這份憑證包沒有完整場次狀態，無法還原');
+      const s = result.state;
+      if (!Array.isArray(s.prizes) || !Array.isArray(s.records) || typeof s.people !== 'string' || !s.settings || s.prizes.length > 1000 || s.records.length > 100000 || s.people.length > 2000000 || !s.session?.id ||
+        s.prizes.some((p) => !p || typeof p.id !== 'string' || !p.id || typeof p.name !== 'string' || !Number.isInteger(p.qty) || p.qty < 1 || p.qty > 999) ||
+        new Set(s.prizes.map((p) => p.id)).size !== s.prizes.length ||
+        s.records.some((r, i) => !r || !r.id || r.seq !== i + 1 || !['valid', 'void', 'aborted'].includes(r.status) || (r.video?.state === 'ready' && (cleanVideoFile(r.video.file) !== r.video.file || !sha(r.video.sha256)))) ||
+        new Set(s.records.map((r) => r.id)).size !== s.records.length) throw new Error('場次狀態資料不完整、識別碼重複或超出限制');
+      inspectedBackup = result;
+      const missing = result.warnings.filter((line) => line.includes('錄影未包含')).length;
+      $('#restore-summary').textContent = `活動：${s.title || '未命名'}；場次：${s.session.id}；${s.prizes.length} 項獎品、${s.records.length} 抽。${missing ? `${missing} 段錄影缺少，只能還原紀錄。` : '錄影齊全。'}`;
+      $('#restore-confirm').value = '';
+      $('#restore-go').disabled = true;
+      openDialog($('#dlg-restore'));
+    } catch (err) {
+      inspectedBackup = null;
+      toast(`無法讀取場次備份：${err.message || err}`, { tone: 'error', timeout: 0 });
+    } finally {
+      clearing = false;
+      renderAll();
+    }
+  }
+
+  async function restoreBackup() {
+    if (busy() || !inspectedBackup || $('#restore-confirm').value.trim() !== '還原') return;
+    const backup = inspectedBackup;
+    $('#dlg-restore').close();
+    clearing = true;
+    renderAll();
+    try {
+      const before = await Promise.all(state.records.map((r) => LW.Vault.get(r.id)));
+      const incoming = backup.state.records.map((r) => ({
+        id: r.id,
+        candidates: backup.snapshots.get(r.id) || null,
+        candidateKeys: backup.audit.draws.find((d) => d.id === r.id)?.candidateKeys || null,
+        video: r.video?.state === 'ready' ? backup.files.get(`${backup.prefix}錄影/${r.video.file}`) || null : null,
+      }));
+      await LW.Vault.replace(incoming);
+      const restored = sanitizeState(backup.state);
+      if (!LW.Store.save(restored)) {
+        await LW.Vault.replace(before.filter(Boolean));
+        throw new Error('無法寫入場次設定；原場次已保留');
+      }
+      Object.assign(state, restored);
+      peopleCache = { text: null, list: [] };
+      fpKey = null;
+      phase = 'idle';
+      stage.clearResult();
+      LW.Sound.setEnabled(state.settings.sound);
+      ensureCurrentPrize();
+      storageError = false;
+      inspectedBackup = null;
+      renderAll();
+      syncStage();
+      toast(`已還原場次 ${state.session.id}，共 ${state.records.length} 抽。`);
+    } catch (err) {
+      toast(`還原失敗：${err.message || err}`, { tone: 'error', timeout: 0 });
+    } finally {
+      clearing = false;
+      renderAll();
     }
   }
 
@@ -1207,6 +1418,12 @@
     }
   }
   el.present.addEventListener('click', () => setPresenting(!el.app.classList.contains('is-presenting')));
+  $('#projection-open').addEventListener('click', () => {
+    if (projectionWindow && !projectionWindow.closed) { projectionWindow.focus(); return; }
+    projectionWindow = window.open('projection.html', 'lucky-wheel-projection', 'popup,width=1280,height=720');
+    if (!projectionWindow) toast('瀏覽器阻擋了投影視窗，請允許這個網站開啟彈出視窗。', { tone: 'error' });
+    else stage.setView({});
+  });
   document.addEventListener('fullscreenchange', () => {
     if (!document.fullscreenElement && el.app.classList.contains('is-presenting')) setPresenting(false);
   });
@@ -1231,7 +1448,7 @@
 
   // prizes
   $('#prize-add').addEventListener('click', () => {
-    const p = { id: LW.uid('prize'), name: '', qty: 1 };
+    const p = { id: LW.uid('prize'), name: '', qty: 1, eligibleGroup: '', repeatPolicy: 'inherit' };
     state.prizes.push(p);
     state.sample = false;
     ensureCurrentPrize();
@@ -1255,6 +1472,9 @@
     if (e.target.dataset.field === 'name') {
       p.name = e.target.value;
       rowError(row, '');
+    } else if (e.target.dataset.field === 'group') {
+      if (state.records.some((r) => r.prizeId === p.id)) return;
+      p.eligibleGroup = e.target.value.trim();
     } else if (e.target.dataset.field === 'qty') {
       const n = Number(e.target.value);
       if (!Number.isInteger(n) || n < Math.max(1, drawnCount(p.id)) || n > 999) return; // judged on blur
@@ -1286,6 +1506,13 @@
       ensureCurrentPrize();
       persist();
       renderPrizes();
+      renderControls();
+      syncStage();
+    } else if (e.target.dataset.field === 'repeat') {
+      if (state.records.some((r) => r.prizeId === p.id)) return;
+      p.repeatPolicy = e.target.value;
+      persist();
+      renderPeopleMeta();
       renderControls();
       syncStage();
     } else if (e.target.dataset.field === 'name' && !p.name.trim()) {
@@ -1351,6 +1578,7 @@
   $('#people-import').addEventListener('click', () => el.filePeople.click());
 
   const HEADER = /^(姓名|名字|名稱|員工姓名|中文姓名|參加者|name|full ?name)$/i;
+  const GROUP_HEADER = /^(組別|組別名稱|部門|單位|group|team|department)$/i;
   el.filePeople.addEventListener('change', async () => {
     const file = el.filePeople.files[0];
     el.filePeople.value = '';
@@ -1358,10 +1586,19 @@
     const text = LW.decodeText(await file.arrayBuffer());
     if (busy() || rosterLocked()) return;
     const isTable = /\.(csv|tsv)$/i.test(file.name) || /csv/.test(file.type);
-    let rows = isTable ? LW.parseCSV(text).map((cells) => cells.map((c) => c.trim()).filter(Boolean)) : text.split(/\r?\n/).map((l) => [l.trim()]);
-    rows = rows.filter((cells) => cells.length && cells.join(''));
-    if (rows.length > 1 && rows[0].some((c) => HEADER.test(c))) rows.shift();
-    const lines = rows.map((cells) => cells.join(' ').replace(/\s+/g, ' ').trim()).filter(Boolean);
+    let rows = isTable ? LW.parseCSV(text).map((cells) => cells.map((c) => c.trim())) : text.split(/\r?\n/).map((l) => [l.trim()]);
+    rows = rows.filter((cells) => cells.some(Boolean));
+    const nameColumn = rows.length && (isTable || rows.length > 1) ? rows[0].findIndex((c) => HEADER.test(c)) : -1;
+    const groupColumn = rows.length && (isTable || rows.length > 1) ? rows[0].findIndex((c) => GROUP_HEADER.test(c)) : -1;
+    if (nameColumn >= 0) rows.shift();
+    const lines = rows.map((cells) => {
+      if (nameColumn >= 0 && groupColumn >= 0) {
+        const name = (cells[nameColumn] || '').replace(/\s+/g, ' ').trim();
+        const group = (cells[groupColumn] || '').replace(/\s+/g, ' ').trim();
+        return name ? `${name}${group ? ` | ${group}` : ''}` : '';
+      }
+      return cells.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+    }).filter(Boolean);
     if (!lines.length) {
       toast(`「${file.name}」裡沒有讀到任何名字。請確認每行一位，或 CSV 每一列是一個人。`, { tone: 'error', timeout: 0 });
       return;
@@ -1373,10 +1610,13 @@
 
   el.dedupe.addEventListener('click', () => {
     const seen = new Set();
-    const kept = people().filter((p) => (seen.has(p.name) ? false : seen.add(p.name)));
+    const kept = people().filter((p) => {
+      const identity = p.group ? `${p.name} | ${p.group}` : p.name;
+      return seen.has(identity) ? false : seen.add(identity);
+    });
     const removed = people().length - kept.length;
     const before = state.people;
-    setPeople(kept.map((p) => p.name).join('\n'));
+    setPeople(kept.map((p) => p.group ? `${p.name} | ${p.group}` : p.name).join('\n'));
     toast(`已移除 ${removed} 個重複的名字`, { action: { label: '復原', run: () => setPeople(before) } });
   });
 
@@ -1406,7 +1646,7 @@
     if (act === 'void') openVoid(id);
   });
   el.exportCsv.addEventListener('click', exportCSV);
-  el.exportZip.addEventListener('click', exportPackage);
+  el.exportZip.addEventListener('click', () => exportPackage());
   el.verify.addEventListener('click', () => el.fileVerify.click());
   el.fileVerify.addEventListener('change', () => {
     const file = el.fileVerify.files[0];
@@ -1442,6 +1682,18 @@
     else toast('仍無法儲存，請檢查瀏覽器的儲存權限或可用空間。', { tone: 'error' });
   });
   $('#reset-open').addEventListener('click', openReset);
+  $('#preflight').addEventListener('click', runPreflight);
+  $('#rehearse').addEventListener('click', rehearse);
+  $('#backup-export').addEventListener('click', () => exportPackage(true));
+  $('#backup-import').addEventListener('click', () => { if (!busy()) $('#file-restore').click(); });
+  $('#file-restore').addEventListener('change', () => {
+    const file = $('#file-restore').files[0];
+    $('#file-restore').value = '';
+    if (file) chooseBackup(file);
+  });
+  $('#restore-confirm').addEventListener('input', () => { $('#restore-go').disabled = $('#restore-confirm').value.trim() !== '還原'; });
+  $('#restore-go').addEventListener('click', restoreBackup);
+  $('#dlg-restore').addEventListener('close', () => { inspectedBackup = null; });
 
   /* =================================================================== lifecycle */
 

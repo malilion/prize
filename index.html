@@ -37,6 +37,7 @@
       </div>
 
       <div class="controls">
+        <p id="stage-text" class="stage-text" role="status" aria-live="polite"></p>
         <label class="controls__prize">
           <span class="controls__label">本輪獎項</span>
           <span class="select-wrap">
@@ -51,6 +52,7 @@
           <p class="controls__hint" id="spin-hint" aria-live="polite">按空白鍵也能開始</p>
         </div>
         <div class="controls__tools">
+          <button id="projection-open" class="btn btn--ghost" type="button">開啟投影視窗</button>
           <button id="sound-toggle" class="btn btn--icon" type="button" aria-pressed="true">
             <svg class="icon" aria-hidden="true"><use href="#i-sound"/></svg>
             <span class="sr-only">音效</span>
@@ -117,7 +119,7 @@
               <button class="btn" id="people-dedupe" type="button">移除重複</button>
               <button class="btn btn--ghost" id="people-clear" type="button">清空名單</button>
             </div>
-            <p class="pane__note">可匯入 .txt 或 .csv（UTF-8 或 Big5）。CSV 會把同一列的欄位合成一個名字，例如「A001 陳怡君 業務部」。</p>
+            <p class="pane__note">可匯入 .txt 或 .csv（UTF-8 或 Big5）。分組請寫成「A001 陳怡君 | 業務部」，獎項可限制組別；普通 CSV 欄位仍合成一個名字。</p>
             <label class="check">
               <input type="checkbox" id="opt-exclude">
               <span>中獎的人不再參加之後的抽獎</span>
@@ -143,6 +145,7 @@
             </button>
           </div>
           <p class="pane__note">中獎名單是 CSV，Excel 可直接開。憑證包是 ZIP，內含名單、完整抽獎紀錄、每一抽的錄影與 SHA-256 雜湊值。</p>
+          <p class="pane__note"><a href="verify.html" target="_blank" rel="noopener">開啟獨立憑證驗證頁</a>，可在另一台電腦離線驗證 ZIP。</p>
           <ol class="records" id="records"></ol>
         </section>
 
@@ -180,6 +183,19 @@
               <span>音效（會一起錄進影片）</span>
             </label>
           </fieldset>
+          <section class="workflow" aria-labelledby="preflight-title">
+            <h3 id="preflight-title">活動前檢查</h3>
+            <button class="btn" id="preflight" type="button">檢查設定與儲存</button>
+            <button class="btn" id="rehearse" type="button">隔離預演一抽</button>
+            <ul id="preflight-results" aria-live="polite"></ul>
+            <p class="pane__note">預演會試轉轉盤與錄影功能，測試影片立即丟棄，不寫入抽獎紀錄、不占用名額。</p>
+          </section>
+          <section class="workflow" aria-labelledby="backup-title">
+            <h3 id="backup-title">場次移轉</h3>
+            <button class="btn" id="backup-export" type="button">匯出場次備份</button>
+            <button class="btn" id="backup-import" type="button">還原場次備份…</button>
+            <p class="pane__note">備份為憑證 ZIP，包含目前設定、名單、紀錄、候選快照及可取得的錄影。還原會取代目前場次，請先匯出目前場次。</p>
+          </section>
           <div class="danger">
             <h3 class="danger__title">重設抽獎</h3>
             <p>刪除所有中獎紀錄和錄影，並換一組新的場次代碼。獎池和名單會保留。</p>
@@ -253,13 +269,29 @@
     </div>
   </dialog>
 
+  <dialog class="dialog" id="dlg-restore" aria-labelledby="dlg-restore-title">
+    <div class="dialog__body">
+      <h2 class="dialog__title" id="dlg-restore-title">還原場次備份</h2>
+      <p id="restore-summary"></p>
+      <p class="dialog__warn">目前場次的設定、紀錄與錄影會被取代。請先匯出目前場次備份。</p>
+      <label class="field" for="restore-confirm"><span class="field__label">輸入「還原」確認</span><input class="input" id="restore-confirm" autocomplete="off"></label>
+      <div class="dialog__actions">
+        <button class="btn btn--ghost" type="button" data-close>取消</button>
+        <button class="btn btn--danger" id="restore-go" type="button" disabled>還原</button>
+      </div>
+    </div>
+  </dialog>
+
   <div class="toasts" id="toasts"></div>
   <p class="sr-only" id="announcer" aria-live="assertive"></p>
   <input type="file" id="file-people" accept=".txt,.csv,.tsv,text/plain,text/csv" hidden>
   <input type="file" id="file-verify" accept="video/*,.mp4,.webm" hidden>
+  <input type="file" id="file-restore" accept=".zip,application/zip" hidden>
 
   <script src="js/util.js"></script>
   <script src="js/zip.js"></script>
+  <script src="js/evidence.js"></script>
+  <script src="js/eligibility.js"></script>
   <script src="js/store.js"></script>
   <script src="js/sound.js"></script>
   <script src="js/recorder.js"></script>

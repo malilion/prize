@@ -279,6 +279,7 @@
       this.drawFooter(ctx);
       if (this.recording) this.drawRecBadge(ctx, now);
       if (this.confetti.length) this.drawConfetti(ctx, dt);
+      if (this.onFrame) this.onFrame(this.canvas, this.view);
     }
 
     /* ---------- cached layers ---------- */

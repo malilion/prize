@@ -123,5 +123,50 @@
     return new Blob([...body, ...central, end.buffer], { type: 'application/zip' });
   }
 
-  Object.assign(LW, { crc32, makeZip });
+  /** Read the STORE-only ZIPs produced by this app without loading video bytes into memory. */
+  async function readZip(blob) {
+    if (!(blob instanceof Blob) || blob.size < 22 || blob.size > 0xffffffff) throw new Error('不是支援的 ZIP 檔案');
+    const tailSize = Math.min(blob.size, 65557);
+    const tail = new DataView(await blob.slice(blob.size - tailSize).arrayBuffer());
+    let end = -1;
+    for (let i = tail.byteLength - 22; i >= 0; i--) {
+      if (tail.getUint32(i, true) === 0x06054b50 && i + 22 + tail.getUint16(i + 20, true) === tail.byteLength) { end = i; break; }
+    }
+    if (end < 0 || tail.getUint16(end + 4, true) !== 0 || tail.getUint16(end + 6, true) !== 0) throw new Error('ZIP 結尾無效');
+    const count = tail.getUint16(end + 10, true);
+    const dirSize = tail.getUint32(end + 12, true);
+    const dirOffset = tail.getUint32(end + 16, true);
+    if (count !== tail.getUint16(end + 8, true) || dirSize > 8 * 1024 * 1024 || dirOffset + dirSize !== blob.size - tailSize + end) throw new Error('ZIP 索引不完整');
+    const dir = new DataView(await blob.slice(dirOffset, dirOffset + dirSize).arrayBuffer());
+    const decoder = new TextDecoder('utf-8', { fatal: true });
+    const files = new Map();
+    let pos = 0;
+    for (let i = 0; i < count; i++) {
+      if (pos + 46 > dir.byteLength || dir.getUint32(pos, true) !== 0x02014b50) throw new Error('ZIP 索引損壞');
+      const flags = dir.getUint16(pos + 8, true);
+      const method = dir.getUint16(pos + 10, true);
+      const crc = dir.getUint32(pos + 16, true);
+      const size = dir.getUint32(pos + 20, true);
+      const nameLength = dir.getUint16(pos + 28, true);
+      const extra = dir.getUint16(pos + 30, true);
+      const comment = dir.getUint16(pos + 32, true);
+      const localOffset = dir.getUint32(pos + 42, true);
+      if (method !== 0 || flags !== 0x0800 || size !== dir.getUint32(pos + 24, true) || pos + 46 + nameLength + extra + comment > dir.byteLength) throw new Error('ZIP 使用不支援的壓縮或索引格式');
+      const name = decoder.decode(new Uint8Array(dir.buffer, pos + 46, nameLength));
+      if (!name || name.startsWith('/') || name.includes('\\') || name.split('/').some((part) => !part || part === '.' || part === '..') || files.has(name)) throw new Error('ZIP 檔名不安全或重複');
+      const headerBytes = await blob.slice(localOffset, localOffset + 30 + nameLength).arrayBuffer();
+      const header = new DataView(headerBytes);
+      if (header.byteLength !== 30 + nameLength || header.getUint32(0, true) !== 0x04034b50 || header.getUint16(6, true) !== flags || header.getUint16(8, true) !== 0 || header.getUint32(14, true) !== crc || header.getUint32(18, true) !== size || header.getUint32(22, true) !== size || header.getUint16(26, true) !== nameLength || header.getUint16(28, true) !== 0 || decoder.decode(new Uint8Array(headerBytes, 30)) !== name) throw new Error('ZIP 檔案標頭與索引不符');
+      const start = localOffset + 30 + nameLength;
+      if (start + size > dirOffset) throw new Error('ZIP 檔案內容超出範圍');
+      const data = blob.slice(start, start + size);
+      if (await crc32Blob(data) !== crc) throw new Error(`ZIP 檔案校驗失敗：${name}`);
+      files.set(name, data);
+      pos += 46 + nameLength + extra + comment;
+    }
+    if (pos !== dir.byteLength) throw new Error('ZIP 索引長度不符');
+    return files;
+  }
+
+  Object.assign(LW, { crc32, makeZip, readZip });
 })(typeof window !== 'undefined' ? window : globalThis);

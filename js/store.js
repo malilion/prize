@@ -115,6 +115,24 @@
       }
     },
 
+    /** Replace all evidence in one IndexedDB transaction; used only after archive validation. */
+    async replace(records) {
+      const db = await openDB();
+      if (db) {
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_NAME, 'readwrite');
+          const store = tx.objectStore(STORE_NAME);
+          store.clear();
+          for (const record of records) store.put(record);
+          tx.oncomplete = resolve;
+          tx.onerror = () => reject(tx.error);
+          tx.onabort = () => reject(tx.error);
+        });
+      }
+      memory.clear();
+      if (!db) for (const record of records) memory.set(record.id, record);
+    },
+
     /** Ask the browser not to evict recordings under storage pressure. */
     async persist() {
       try {

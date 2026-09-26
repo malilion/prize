@@ -124,6 +124,7 @@ fieldset { display: grid; gap: var(--space-md); min-width: 0; margin: 0; padding
   align-items: flex-end;
   gap: var(--space-sm) var(--space-lg);
 }
+.stage-text { flex-basis: 100%; margin: 0; color: var(--color-ink-3); font-size: var(--text-sm); }
 .controls__prize {
   display: grid;
   gap: var(--space-2xs);
@@ -386,6 +387,16 @@ input[type="range"] { width: 100%; margin: var(--space-xs) 0; accent-color: var(
   border-bottom: 1px solid var(--color-rule);
 }
 .prize__line { display: flex; align-items: center; gap: var(--space-xs); }
+.prize__rules { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-xs); margin-block: var(--space-xs); }
+.prize__rules label { display: grid; gap: .25rem; font-size: var(--text-sm); color: var(--color-ink-3); }
+.prize__rules .input { min-width: 0; width: 100%; }
+.workflow { border-top: 1px solid var(--color-line, #685441); padding-block: var(--space-md); }
+.workflow h3 { margin: 0 0 var(--space-sm); }
+.workflow .btn { margin: 0 var(--space-xs) var(--space-xs) 0; }
+.workflow ul { padding-inline-start: 1.35rem; }
+.check-ok { color: #aad799; }
+.check-bad { color: #e9ad86; }
+@media (max-width: 560px) { .prize__rules { grid-template-columns: 1fr; } }
 .prize__index { flex: none; width: var(--space-lg); font-size: var(--text-sm); color: var(--color-ink-3); }
 .prize__name { flex: 1 1 auto; min-width: 0; }
 .prize__qty { display: flex; flex: none; align-items: center; gap: var(--space-2xs); font-size: var(--text-sm); color: var(--color-ink-3); }
