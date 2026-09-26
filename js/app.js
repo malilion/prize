@@ -143,7 +143,7 @@
   let phase = 'idle'; // idle → drawing → saving → result → idle
   let zipping = false;
   let clearing = false;
-  let checking = false;
+  let checking = state.records.some((record) => (record.status === 'valid' || record.status === 'void') && record.video?.state === 'failed');
   let saveTimer = 0;
   let storageError = false;
   let staleState = false;
@@ -857,6 +857,7 @@
     if (allExclude) add(people().length >= slots, `尚有 ${slots} 個名額、名單共 ${people().length} 人（跨組別名額請另行核對）`);
     add(!state.settings.record || LW.Recorder.supported(), '此瀏覽器可執行目前的錄影設定');
     await LW.Vault.ready();
+    await recoverRecordings();
     add(LW.Vault.durable, '錄影與候選快照可長期保存於此瀏覽器');
     const canSave = persist(true);
     storageError = !canSave;
@@ -956,7 +957,7 @@
         downloaded: false,
       };
       await snapshotSaved;
-      await LW.Vault.update(record.id, { video: out.blob });
+      await LW.Vault.update(record.id, { video: out.blob, videoMeta: { ...record.video } });
       if (state.settings.autoDownload) {
         LW.download(out.blob, file);
         record.video.downloaded = true;
@@ -979,6 +980,37 @@
   function videoFileName(record, mime) {
     const base = `抽獎錄影_第${LW.pad(record.seq, 3)}抽_${record.prizeName}_${record.name}_${LW.fileStamp(new Date(record.drawnAt))}`;
     return `${LW.safeFilename(base, 120)}.${LW.Recorder.extensionFor(mime)}`;
+  }
+
+  async function recoverRecordings() {
+    const missing = state.records.filter((record) =>
+      (record.status === 'valid' || record.status === 'void') && record.video?.state === 'failed');
+    if (!missing.length) return;
+    const recovered = [];
+    for (const record of missing) {
+      const snapshot = await LW.Vault.get(record.id);
+      const video = await LW.recoverVideo(snapshot);
+      if (video) recovered.push({ record, video });
+    }
+    if (!recovered.length) return;
+    if (staleState || !freshStore()) {
+      toast('找到未完成的錄影資料，但另一個分頁已更新場次。請重新整理後恢復。', { tone: 'error', timeout: 0 });
+      return;
+    }
+    for (const entry of recovered) {
+      entry.previous = entry.record.video;
+      entry.record.video = entry.video;
+    }
+    const saved = persist(true);
+    if (!saved && staleState) {
+      for (const { record, previous } of recovered) record.video = previous;
+    }
+    toast(saved
+      ? `已驗證並恢復 ${recovered.length} 段先前未完成的錄影。`
+      : staleState
+        ? '已找回錄影，但另一個分頁更新了場次。請重新整理後再檢查。'
+        : `已找回 ${recovered.length} 段錄影，但瀏覽器無法更新紀錄。請立刻匯出憑證包。`,
+    { tone: saved ? 'info' : 'error', timeout: saved ? 6000 : 0 });
   }
 
   /* =================================================================== exports */
@@ -1816,9 +1848,18 @@
   selectTab(TABS.includes(savedTab) ? savedTab : 'prizes');
   renderAll();
   syncStage();
-  LW.Vault.ready().then(() => {
+  LW.Vault.ready().then(async () => {
     vaultChecked = true;
-    renderStorageInfo();
+    try { await recoverRecordings(); }
+    catch (err) { toast(`錄影恢復檢查失敗：${err.message || err}`, { tone: 'error' }); }
+    finally {
+      checking = false;
+      renderAll();
+    }
+  }).catch((err) => {
+    checking = false;
+    renderAll();
+    toast(`錄影儲存空間無法開啟：${err.message || err}`, { tone: 'error' });
   });
 
   // Debug handle for the browser console: LW.app.state, LW.app.stage

@@ -260,6 +260,20 @@ test('session replacement stages evidence before switching state', async () => {
   assert.equal((await LW.Vault.get('new')).candidates[0], '乙');
 });
 
+test('unfinished recording metadata is recovered only from a matching saved Blob', async () => {
+  const video = new Blob([Uint8Array.of(1, 4, 9, 16)], { type: 'video/webm' });
+  const meta = { state: 'ready', file: '第001抽.webm', mime: 'video/webm', size: video.size,
+    sha256: await LW.sha256Hex(video), durationMs: 3200, downloaded: false };
+  await LW.Vault.put({ id: 'recover-me', candidates: ['甲'], video: null });
+  await LW.Vault.update('recover-me', { video, videoMeta: meta });
+  const recovered = await LW.recoverVideo(await LW.Vault.get('recover-me'));
+  assert.equal(recovered?.sha256, meta.sha256);
+  assert.equal(recovered?.file, meta.file);
+  assert.equal(await LW.recoverVideo({ video: new Blob(['changed']), videoMeta: meta }), null);
+  assert.equal(await LW.recoverVideo({ video, videoMeta: { ...meta, file: '../unsafe.webm' } }), null);
+  assert.equal(await LW.recoverVideo({ video, videoMeta: { ...meta, sha256: '0'.repeat(64) } }), null);
+});
+
 test('a backup before the first draw can be inspected and restored', async () => {
   const state = { v: 1, title: '活動', session: { id: 'EMPTY', createdAt: '2026-09-27T00:00:00.000Z' }, people: '甲', prizes: [], records: [], settings: { allowRepeat: false } };
   const zip = await LW.makeZip([

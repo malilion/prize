@@ -273,6 +273,24 @@
     },
   };
 
+  /** Only revive metadata when the staged Blob still matches its recorded digest. */
+  async function recoverVideo(snapshot) {
+    const video = snapshot?.video;
+    const meta = snapshot?.videoMeta;
+    if (typeof Blob === 'undefined' || !(video instanceof Blob) || !meta || meta.state !== 'ready') return null;
+    const filename = typeof meta.file === 'string' && /^(.+)\.(mp4|webm)$/.exec(meta.file);
+    if (!filename || LW.safeFilename(filename[1], 120) !== filename[1] ||
+      typeof meta.mime !== 'string' || !meta.mime || meta.mime.length > 80 ||
+      !Number.isSafeInteger(meta.size) || meta.size !== video.size ||
+      !Number.isSafeInteger(meta.durationMs) || meta.durationMs < 0 || meta.durationMs > 3600000 ||
+      typeof meta.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(meta.sha256)) return null;
+    try {
+      if (await LW.sha256Hex(video) !== meta.sha256) return null;
+    } catch (_) { return null; }
+    return { state: 'ready', file: meta.file, mime: meta.mime, size: meta.size,
+      sha256: meta.sha256, durationMs: meta.durationMs, downloaded: !!meta.downloaded };
+  }
+
   /** Stage evidence before switching state; interruption leaves the previously active session intact. */
   async function replaceSession(previousState, nextState, evidence, { store = Store, vault = Vault } = {}) {
     const oldGeneration = previousState.vaultGeneration || '';
@@ -288,5 +306,5 @@
     try { await vault.removeSession(oldGeneration, previousState.records); } catch (_) { /* old evidence remains as a backup */ }
   }
 
-  Object.assign(LW, { Store, Vault, DrawGate, replaceSession });
+  Object.assign(LW, { Store, Vault, DrawGate, replaceSession, recoverVideo });
 })(typeof window !== 'undefined' ? window : globalThis);
