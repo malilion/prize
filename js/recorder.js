@@ -57,12 +57,21 @@
     if (!supported()) throw new Error('這個瀏覽器不支援畫面錄影');
     const canvasStream = canvas.captureStream(fps);
     const tracks = canvasStream.getVideoTracks();
-    if (audioTrack && audioTrack.readyState === 'live') tracks.push(audioTrack.clone());
-    const stream = new MediaStream(tracks);
+    if (!tracks.length) throw new Error('轉盤畫面沒有可錄製的影像軌');
+    let stream;
+    try {
+      if (audioTrack && audioTrack.readyState === 'live') tracks.push(audioTrack.clone());
+      stream = new MediaStream(tracks);
+    } catch (err) {
+      tracks.forEach((track) => track.stop());
+      throw err;
+    }
     const hasAudio = stream.getAudioTracks().length > 0;
     const preferred = pickType(hasAudio);
+    const release = () => stream.getTracks().forEach((t) => t.stop());
 
     let recorder;
+    let selectedType = preferred;
     try {
       recorder = new MediaRecorder(stream, {
         mimeType: preferred || undefined,
@@ -70,12 +79,13 @@
         audioBitsPerSecond: hasAudio ? 128000 : undefined,
       });
     } catch (_) {
-      recorder = new MediaRecorder(stream); // browser default container
+      selectedType = '';
+      try { recorder = new MediaRecorder(stream); } // browser default container
+      catch (err) { release(); throw err; }
     }
 
     const chunks = [];
     let failure = null;
-    const release = () => stream.getTracks().forEach((t) => t.stop());
     recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
     recorder.onerror = (e) => { failure = e.error || new Error('錄影時發生錯誤'); };
     try {
@@ -86,7 +96,7 @@
     }
 
     const startedAt = performance.now();
-    const mimeType = () => recorder.mimeType || preferred || 'video/webm';
+    const mimeType = () => recorder.mimeType || chunks.find((chunk) => chunk.type)?.type || selectedType;
     const finish = () => {
       const type = mimeType();
       return {
@@ -103,7 +113,8 @@
         return new Promise((resolve, reject) => {
           const done = () => {
             release();
-            if (!chunks.length) reject(failure || new Error('錄影沒有產生任何畫面'));
+            if (failure || !chunks.length) reject(failure || new Error('錄影沒有產生任何畫面'));
+            else if (!/^video\/(mp4|webm)(?:;|$)/i.test(mimeType())) reject(new Error('錄影格式無法辨識，沒有儲存這段影片'));
             else resolve(finish());
           };
           if (recorder.state === 'inactive') return done();

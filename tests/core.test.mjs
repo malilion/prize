@@ -180,6 +180,66 @@ test('blocked IndexedDB upgrade can be retried and closes a late connection', as
   assert.equal(gateContext.LW.Vault.durable, true);
 });
 
+test('recorder rejects partial output after an encoder error and releases tracks on failure', async () => {
+  function recorderWith(Recorder) {
+    const track = { kind: 'video', stopped: false, stop() { this.stopped = true; } };
+    class Canvas {
+      captureStream() { return { getVideoTracks: () => [track] }; }
+    }
+    class Stream {
+      constructor(tracks) { this.tracks = tracks; }
+      getAudioTracks() { return this.tracks.filter((item) => item.kind === 'audio'); }
+      getTracks() { return this.tracks; }
+    }
+    const recorderContext = vm.createContext({ Blob, MediaStream: Stream, MediaRecorder: Recorder, HTMLCanvasElement: Canvas, performance });
+    recorderContext.globalThis = recorderContext;
+    vm.runInContext(readFileSync(new URL('../js/recorder.js', import.meta.url), 'utf8'), recorderContext);
+    return { recorder: recorderContext.LW.Recorder, canvas: new Canvas(), track };
+  }
+
+  class PartialRecorder {
+    static isTypeSupported() { return true; }
+    constructor() { this.state = 'inactive'; this.mimeType = 'video/webm'; }
+    start() {
+      this.state = 'recording';
+      this.ondataavailable({ data: new Blob(['partial video']) });
+      this.onerror({ error: new Error('encoder failed') });
+    }
+    stop() { this.state = 'inactive'; queueMicrotask(() => this.onstop()); }
+  }
+  const partial = recorderWith(PartialRecorder);
+  await assert.rejects(partial.recorder.start(partial.canvas).stop(), /encoder failed/);
+  assert.equal(partial.track.stopped, true);
+
+  class BrokenRecorder {
+    static isTypeSupported() { return true; }
+    constructor() { throw new Error('encoder unavailable'); }
+  }
+  const broken = recorderWith(BrokenRecorder);
+  assert.throws(() => broken.recorder.start(broken.canvas), /encoder unavailable/);
+  assert.equal(broken.track.stopped, true);
+
+  class FallbackRecorder {
+    static isTypeSupported() { return true; }
+    constructor(_stream, options) {
+      if (options?.mimeType) throw new Error('preferred format refused');
+      this.state = 'inactive';
+      this.mimeType = '';
+    }
+    start() { this.state = 'recording'; }
+    stop() {
+      this.state = 'inactive';
+      this.ondataavailable({ data: new Blob(['webm video'], { type: 'video/webm' }) });
+      queueMicrotask(() => this.onstop());
+    }
+  }
+  const fallback = recorderWith(FallbackRecorder);
+  const output = await fallback.recorder.start(fallback.canvas).stop();
+  assert.equal(output.mimeType, 'video/webm');
+  assert.equal(fallback.recorder.extensionFor(output.mimeType), 'webm');
+  assert.equal(fallback.track.stopped, true);
+});
+
 test('SHA-256 matches Node across padding boundaries and large Blob chunks', async () => {
   for (const size of [0, 1, 55, 56, 63, 64, 65, 4097, 33 * 1024 * 1024 + 17]) {
     const bytes = randomBytes(size);
