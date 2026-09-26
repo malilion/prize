@@ -1383,8 +1383,14 @@
   /* =================================================================== videos */
 
   async function videoBlob(record) {
-    const snap = await LW.Vault.get(record.id);
-    if (snap && snap.video) return snap.video;
+    try {
+      const snap = await LW.Vault.get(record.id);
+      const video = await LW.verifiedVideo(snap, record.video);
+      if (video) return video;
+    } catch (err) {
+      toast(`第 ${record.seq} 抽的錄影無法安全讀取：${err.message || err}。請檢查先前下載的檔案。`, { tone: 'error', timeout: 0 });
+      return null;
+    }
     toast(`這段錄影已經不在瀏覽器裡。若當時有自動下載，請到下載資料夾找「${record.video.file}」。`, { tone: 'error', timeout: 0 });
     return null;
   }
@@ -1395,8 +1401,11 @@
     const blob = await videoBlob(r);
     if (!blob) return;
     LW.download(blob, cleanVideoFile(r.video.file));
-    r.video.downloaded = true;
-    persist();
+    if (canEditSession()) {
+      const previous = r.video.downloaded;
+      r.video.downloaded = true;
+      if (!persist(true)) r.video.downloaded = previous;
+    }
     renderRecords();
     renderStorageInfo();
   }

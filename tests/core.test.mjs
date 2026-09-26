@@ -419,6 +419,16 @@ test('unfinished recording metadata is recovered only from a matching saved Blob
   assert.equal(await LW.recoverVideo({ video, videoMeta: { ...meta, sha256: '0'.repeat(64) } }), null);
 });
 
+test('saved recordings are verified against the current draw before playback or download', async () => {
+  const video = new Blob([Uint8Array.of(2, 7, 1, 8)], { type: 'video/webm' });
+  const recordVideo = { state: 'ready', size: video.size, sha256: await LW.sha256Hex(video) };
+  assert.equal(await LW.verifiedVideo({ video }, recordVideo), video);
+  assert.equal(await LW.verifiedVideo({ video: null }, recordVideo), null);
+  await assert.rejects(LW.verifiedVideo({ video }, { ...recordVideo, size: video.size + 1 }), /大小或 SHA-256 不符/);
+  await assert.rejects(LW.verifiedVideo({ video: new Blob(['changed']) }, recordVideo), /大小或 SHA-256 不符/);
+  await assert.rejects(LW.verifiedVideo({ video: new Blob(['xxxx']) }, recordVideo), /大小或 SHA-256 不符/);
+});
+
 test('a backup before the first draw can be inspected and restored', async () => {
   const state = { v: 1, title: '活動', session: { id: 'EMPTY', createdAt: '2026-09-27T00:00:00.000Z' }, people: '甲', prizes: [], records: [], settings: { allowRepeat: false } };
   const zip = await LW.makeZip([

@@ -311,6 +311,18 @@
       sha256: meta.sha256, durationMs: meta.durationMs, downloaded: !!meta.downloaded };
   }
 
+  /** Verify the current record against the saved Blob before serving it for playback or download. */
+  async function verifiedVideo(snapshot, meta) {
+    const video = snapshot?.video;
+    if (typeof Blob === 'undefined' || !(video instanceof Blob)) return null;
+    if (!meta || meta.state !== 'ready' || video.size !== meta.size ||
+      typeof meta.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(meta.sha256) ||
+      await LW.sha256Hex(video) !== meta.sha256) {
+      throw new Error('錄影內容與中獎紀錄的大小或 SHA-256 不符');
+    }
+    return video;
+  }
+
   /** Stage evidence before switching state; interruption leaves the previously active session intact. */
   async function replaceSession(previousState, nextState, evidence, { store = Store, vault = Vault } = {}) {
     const oldGeneration = previousState.vaultGeneration || '';
@@ -326,5 +338,5 @@
     try { await vault.removeSession(oldGeneration, previousState.records); } catch (_) { /* old evidence remains as a backup */ }
   }
 
-  Object.assign(LW, { Store, Vault, DrawGate, replaceSession, recoverVideo });
+  Object.assign(LW, { Store, Vault, DrawGate, replaceSession, recoverVideo, verifiedVideo });
 })(typeof window !== 'undefined' ? window : globalThis);
