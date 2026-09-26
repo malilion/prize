@@ -233,12 +233,12 @@
 
   /* ----- derived data ----- */
 
-  let peopleCache = { text: null, list: [] };
+  let peopleCache = { text: null, scheme: null, list: [] };
   /** One entry per non-empty line. Repeated identities get an ordinal key. */
   function people() {
-    if (peopleCache.text === state.people) return peopleCache.list;
-    const list = LW.parsePeople(state.people);
-    peopleCache = { text: state.people, list };
+    if (peopleCache.text === state.people && peopleCache.scheme === state.rosterKeyScheme) return peopleCache.list;
+    const list = state.rosterKeyScheme === 1 ? LW.parsePeopleLegacy(state.people) : LW.parsePeople(state.people);
+    peopleCache = { text: state.people, scheme: state.rosterKeyScheme, list };
     return list;
   }
 
@@ -1326,7 +1326,8 @@
         new Set(s.records.map((r) => r.id)).size !== s.records.length) throw new Error('場次狀態資料不完整、識別碼重複或超出限制');
       inspectedBackup = result;
       const missing = result.warnings.filter((line) => line.includes('錄影未包含')).length;
-      $('#restore-summary').textContent = `活動：${s.title || '未命名'}；場次：${s.session.id}；${s.prizes.length} 項獎品、${s.records.length} 抽。${missing ? `${missing} 段錄影缺少，只能還原紀錄。` : '錄影齊全。'}${storageProblem ? ' 目前儲存的場次無法讀取；還原會取代原始資料，建議先下載原始資料。' : ''}`;
+      const collidingKeys = s.records.length > 0 && result.warnings.some((line) => line.includes('識別鍵發生衝突'));
+      $('#restore-summary').textContent = `活動：${s.title || '未命名'}；場次：${s.session.id}；${s.prizes.length} 項獎品、${s.records.length} 抽。${missing ? `${missing} 段錄影缺少，只能還原紀錄。` : '錄影齊全。'}${collidingKeys ? ' 舊版名單識別鍵衝突；還原後須重設場次才能繼續抽獎。' : ''}${storageProblem ? ' 目前儲存的場次無法讀取；還原會取代原始資料，建議先下載原始資料。' : ''}`;
       $('#restore-confirm').value = '';
       $('#restore-go').disabled = true;
       openDialog($('#dlg-restore'));

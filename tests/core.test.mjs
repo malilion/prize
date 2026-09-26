@@ -432,6 +432,64 @@ test('a backup before the first draw can be inspected and restored', async () =>
   assert.equal(report.state.session.id, 'EMPTY');
 });
 
+test('legacy colliding roster keys remain restorable with an explicit fairness warning', async () => {
+  const rosterText = '甲\n甲\n甲#2';
+  const roster = LW.parsePeopleLegacy(rosterText);
+  assert.deepEqual(Array.from(roster, (person) => person.key), ['甲', '甲#2', '甲#2']);
+  const names = roster.map((person) => person.name);
+  const hash = await LW.sha256Hex(names.join('\n'));
+  const drawnAt = '2026-09-27T00:00:00.000Z';
+  const rule = { eligibleGroup: '', repeatPolicy: 'exclude', allowRepeat: false };
+  const record = { id: 'old-draw', seq: 1, prizeId: 'p', prizeName: '獎品', name: '甲', key: '甲#2',
+    index: 1, candidateCount: 3, candidatesHash: hash, drawnAt, status: 'valid', rule, video: { state: 'none' } };
+  const state = { v: 1, title: '舊活動', session: { id: 'OLD', createdAt: drawnAt },
+    people: rosterText, prizes: [{ id: 'p', name: '獎品', qty: 1, eligibleGroup: '', repeatPolicy: 'exclude' }],
+    records: [record], settings: { allowRepeat: false } };
+  const draw = { id: record.id, seq: 1, drawnAt, prize: '獎品', winner: '甲', winnerKey: '甲#2',
+    winnerIndex: 1, candidateCount: 3, candidatesSha256: hash, candidates: names,
+    candidateKeys: roster.map((person) => person.key), eligibility: rule, status: 'valid', video: { state: 'none' } };
+  const audit = { format: 'lucky-wheel-audit/2', event: { title: '舊活動', sessionId: 'OLD', sessionCreatedAt: drawnAt },
+    prizes: [{ id: 'p', name: '獎品', quantity: 1, eligibleGroup: '', repeatPolicy: 'exclude', drawn: 1 }],
+    participants: names, participantDetails: roster, draws: [draw] };
+  const zip = await LW.makeZip([
+    { name: '包/抽獎紀錄.json', data: JSON.stringify(audit) },
+    { name: '包/中獎名單.csv', data: LW.toCSV([[...LW.AUDIT_CSV_HEADER],
+      ['1', '獎品', '甲', drawnAt, '有效', '', '3', hash, '', '', 'OLD']]) },
+    { name: '包/場次狀態.json', data: JSON.stringify({ format: 'lucky-wheel-session/1', state }) },
+    { name: '包/SHA256SUMS.txt', data: '' },
+  ]);
+  const result = await LW.inspectPackage(zip);
+  assert.deepEqual(Array.from(result.errors), []);
+  assert.ok(result.warnings.some((warning) => warning.includes('識別鍵發生衝突')));
+  assert.equal(result.state.session.id, 'OLD');
+  assert.equal(result.snapshots.get('old-draw')[1], '甲');
+  const emptyState = { ...state, records: [] };
+  const emptyAudit = { ...audit, draws: [], prizes: [{ ...audit.prizes[0], drawn: 0 }] };
+  const emptyZip = await LW.makeZip([
+    { name: '包/抽獎紀錄.json', data: JSON.stringify(emptyAudit) },
+    { name: '包/中獎名單.csv', data: LW.toCSV([[...LW.AUDIT_CSV_HEADER]]) },
+    { name: '包/場次狀態.json', data: JSON.stringify({ format: 'lucky-wheel-session/1', state: emptyState }) },
+    { name: '包/SHA256SUMS.txt', data: '' },
+  ]);
+  const emptyResult = await LW.inspectPackage(emptyZip);
+  assert.deepEqual(Array.from(emptyResult.errors), []);
+  assert.ok(emptyResult.warnings.some((warning) => warning.includes('尚未抽獎')));
+  const newRoster = LW.parsePeople(rosterText);
+  const currentState = { ...state, rosterKeyScheme: 2, records: [{ ...record, key: newRoster[1].key }] };
+  const currentAudit = { ...audit, participantDetails: newRoster,
+    draws: [{ ...draw, winnerKey: newRoster[1].key, candidateKeys: newRoster.map((person) => person.key) }] };
+  const currentZip = await LW.makeZip([
+    { name: '包/抽獎紀錄.json', data: JSON.stringify(currentAudit) },
+    { name: '包/中獎名單.csv', data: LW.toCSV([[...LW.AUDIT_CSV_HEADER],
+      ['1', '獎品', '甲', drawnAt, '有效', '', '3', hash, '', '', 'OLD']]) },
+    { name: '包/場次狀態.json', data: JSON.stringify({ format: 'lucky-wheel-session/1', state: currentState }) },
+    { name: '包/SHA256SUMS.txt', data: '' },
+  ]);
+  const currentResult = await LW.inspectPackage(currentZip);
+  assert.deepEqual(Array.from(currentResult.errors), []);
+  assert.deepEqual(Array.from(currentResult.warnings), []);
+});
+
 test('verification report separates archive integrity from a published ZIP hash', () => {
   const hash = 'a'.repeat(64);
   const report = { audit: { event: { title: '活動', sessionId: 'ABC' }, draws: [{}] }, errors: [], warnings: ['缺少一段錄影'] };

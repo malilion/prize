@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
   const LW = (root.LW = root.LW || {});
-  function parsePeople(text) {
+  function rosterEntries(text) {
     const entries = [];
     for (const line of text.split(/\r?\n/)) {
       const raw = line.trim();
@@ -11,6 +11,10 @@
       const group = (separator ? raw.slice(separator.index + separator[0].length) : '').replace(/\s+/g, ' ').trim();
       if (name) entries.push({ name, group, identity: group ? `${name} | ${group}` : name });
     }
+    return entries;
+  }
+  function parsePeople(text) {
+    const entries = rosterEntries(text);
     // Reserve every literal identity before assigning duplicate suffixes. Otherwise a
     // second "甲" could receive the same key as someone actually named "甲#2".
     const identities = new Set(entries.map((entry) => entry.identity));
@@ -30,14 +34,17 @@
     }
     return list;
   }
-  function legacyRosterKeyCollision(text) {
+  function parsePeopleLegacy(text) {
     const seen = new Map();
-    const used = new Set();
-    for (const { name, group } of parsePeople(text)) {
-      const identity = group ? `${name} | ${group}` : name;
+    return rosterEntries(text).map(({ name, group, identity }) => {
       const n = (seen.get(identity) || 0) + 1;
       seen.set(identity, n);
-      const key = n > 1 ? `${identity}#${n}` : identity;
+      return { name, group, key: n > 1 ? `${identity}#${n}` : identity };
+    });
+  }
+  function legacyRosterKeyCollision(text) {
+    const used = new Set();
+    for (const { key } of parsePeopleLegacy(text)) {
       if (used.has(key)) return true;
       used.add(key);
     }
@@ -106,5 +113,5 @@
 
   const rosterLinesFromRows = (rows, isTable = false) => rosterImportFromRows(rows, isTable).lines;
 
-  Object.assign(LW, { parsePeople, legacyRosterKeyCollision, rosterIdentifierIssue, allowsRepeat, eligiblePeople, exclusiveCapacity, rosterImportFromRows, rosterLinesFromRows });
+  Object.assign(LW, { parsePeople, parsePeopleLegacy, legacyRosterKeyCollision, rosterIdentifierIssue, allowsRepeat, eligiblePeople, exclusiveCapacity, rosterImportFromRows, rosterLinesFromRows });
 })(typeof window !== 'undefined' ? window : globalThis);
