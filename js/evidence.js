@@ -125,7 +125,8 @@
           !draw.eligibility || typeof draw.eligibility !== 'object' || Array.isArray(draw.eligibility) ||
           typeof draw.eligibility.eligibleGroup !== 'string' ||
           !['inherit', 'allow', 'exclude'].includes(draw.eligibility.repeatPolicy) ||
-          typeof draw.eligibility.allowRepeat !== 'boolean')) {
+          typeof draw.eligibility.allowRepeat !== 'boolean' ||
+          (draw.eligibility.voidNoReturnExcluded != null && typeof draw.eligibility.voidNoReturnExcluded !== 'boolean'))) {
         errors.push(`${tag}：缺少候選識別鍵或資格規則，無法驗證候選人資格`);
       }
       const csvRow = csv[i + 1];
@@ -212,7 +213,8 @@
             if (typeof LW.eligiblePeople === 'function' && d.eligibility) {
               const drawnAt = Date.parse(d.drawnAt);
               const past = state.records.slice(0, i).map((previous) => previous.status === 'void' && Date.parse(previous.voidAt) > drawnAt ? { ...previous, status: 'valid' } : previous);
-              const expected = LW.eligiblePeople(roster, past, d.eligibility, { allowRepeat: d.eligibility.allowRepeat });
+              const expected = LW.eligiblePeople(roster, past, d.eligibility, { allowRepeat: d.eligibility.allowRepeat },
+                { voidNoReturnExcluded: d.eligibility.voidNoReturnExcluded === true });
               if (expected.length !== d.candidateKeys.length || expected.some((person, index) => person.key !== d.candidateKeys[index] || person.name !== d.candidates?.[index])) errors.push(`第 ${i + 1} 抽：實際候選名單與資格規則不符`);
             }
           }

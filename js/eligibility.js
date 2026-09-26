@@ -62,10 +62,12 @@
     const policy = prize?.repeatPolicy || 'inherit';
     return policy === 'allow' || (policy === 'inherit' && !!settings?.allowRepeat);
   }
-  function eligiblePeople(list, records, prize, settings) {
+  function eligiblePeople(list, records, prize, settings, { voidNoReturnExcluded = true } = {}) {
     const allowRepeat = allowsRepeat(prize, settings);
-    const held = allowRepeat ? null : new Set(records.filter((r) => r.status === 'valid' || (r.status === 'void' && !r.returnToPool)).map((r) => r.key));
-    return list.filter((p) => (!prize?.eligibleGroup || p.group === prize.eligibleGroup) && (!held || !held.has(p.key)));
+    const held = new Set(records.filter((r) =>
+      (!allowRepeat && r.status === 'valid') ||
+      (r.status === 'void' && !r.returnToPool && (!allowRepeat || voidNoReturnExcluded))).map((r) => r.key));
+    return list.filter((p) => (!prize?.eligibleGroup || p.group === prize.eligibleGroup) && !held.has(p.key));
   }
 
   function exclusiveCapacity(list, records, demands) {

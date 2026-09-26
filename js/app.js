@@ -119,6 +119,7 @@
           eligibleGroup: str(r.rule.eligibleGroup, 40).trim(),
           repeatPolicy: ['inherit', 'allow', 'exclude'].includes(r.rule.repeatPolicy) ? r.rule.repeatPolicy : 'inherit',
           allowRepeat: !!r.rule.allowRepeat,
+          ...(typeof r.rule.voidNoReturnExcluded === 'boolean' ? { voidNoReturnExcluded: r.rule.voidNoReturnExcluded } : {}),
         } : undefined,
         abortReason: r.abortReason == null ? undefined : str(r.abortReason, 200),
         video,
@@ -942,7 +943,8 @@
         drawnAt: new Date().toISOString(),
         status: 'pending',
         video: recorder ? { state: 'recording' } : { state: 'none' },
-        rule: { eligibleGroup: prize.eligibleGroup || '', repeatPolicy: prize.repeatPolicy || 'inherit', allowRepeat: LW.allowsRepeat(prize, state.settings) },
+        rule: { eligibleGroup: prize.eligibleGroup || '', repeatPolicy: prize.repeatPolicy || 'inherit',
+          allowRepeat: LW.allowsRepeat(prize, state.settings), voidNoReturnExcluded: true },
       };
       await assertLock();
       state.records.push(record);
@@ -1359,7 +1361,7 @@
       method: {
         random: 'Web Crypto crypto.getRandomValues()，以拒絕取樣產生均勻整數（沒有模數偏差）。winnerIndex 是中獎者在 candidates 裡的位置，從 0 起算。',
         candidatesSha256: 'SHA-256(UTF-8(candidates 依轉盤順序以換行字元 \\n 連接))，與錄影畫面下方的「名單指紋」相同。',
-        eligibility: '每抽的 eligibility 保存限定組別與曾中獎者規則；candidateKeys 保存實際候選人的識別鍵。',
+        eligibility: '每抽的 eligibility 保存限定組別、曾中獎者規則與作廢未放回者是否排除；candidateKeys 保存實際候選人的識別鍵。',
         recording: '每一抽自動錄下 1920×1080 的轉盤畫面，從轉動前 1 秒錄到結果後 3 秒；檔案的 SHA-256 記在 video.sha256。',
       },
       prizes: state.prizes.map((p) => ({ id: p.id, name: prizeLabel(p), quantity: p.qty, eligibleGroup: p.eligibleGroup || '', repeatPolicy: p.repeatPolicy || 'inherit', drawn: drawnCount(p.id) })),

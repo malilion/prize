@@ -514,6 +514,11 @@ test('eligibility applies group and per-prize repeat rules', () => {
   const records = [{ key: people[0].key, status: 'valid' }];
   assert.equal(LW.eligiblePeople(people, records, { eligibleGroup: '業務', repeatPolicy: 'exclude' }, { allowRepeat: true }).length, 1);
   assert.equal(LW.eligiblePeople(people, records, { eligibleGroup: '業務', repeatPolicy: 'allow' }, { allowRepeat: false }).length, 2);
+  const voided = [{ key: people[0].key, status: 'void', returnToPool: false }];
+  const repeatPrize = { eligibleGroup: '業務', repeatPolicy: 'allow' };
+  assert.deepEqual(Array.from(LW.eligiblePeople(people, voided, repeatPrize, { allowRepeat: false }), (person) => person.key), [people[2].key]);
+  assert.equal(LW.eligiblePeople(people, voided, repeatPrize, { allowRepeat: false }, { voidNoReturnExcluded: false }).length, 2);
+  assert.equal(LW.eligiblePeople(people, [{ ...voided[0], returnToPool: true }], repeatPrize, { allowRepeat: false }).length, 2);
   assert.equal(LW.allowsRepeat({ repeatPolicy: 'allow' }, { allowRepeat: false }), true);
   assert.equal(LW.allowsRepeat({ repeatPolicy: 'exclude' }, { allowRepeat: true }), false);
   assert.equal(LW.allowsRepeat({ repeatPolicy: 'inherit' }, { allowRepeat: true }), true);
@@ -812,6 +817,57 @@ test('single-draw evidence detects missing, altered, and colliding snapshots', a
   const legacy = await LW.inspectDrawEvidence(record, { ...snapshot, candidateKeys: ['乙', '乙'] }, { allowDuplicateKeys: true });
   assert.equal(legacy.errors.length, 0);
   assert.ok(legacy.warnings.some((warning) => warning.includes('衝突')));
+});
+
+test('archive verifier respects recorded no-return policy for repeat prizes', async () => {
+  const roster = LW.parsePeople('甲\n乙');
+  const firstAt = '2026-09-27T00:00:01.000Z';
+  const voidAt = '2026-09-27T00:00:02.000Z';
+  const secondAt = '2026-09-27T00:00:03.000Z';
+  const prize = { id: 'p', name: '獎品', qty: 2, eligibleGroup: '', repeatPolicy: 'allow' };
+  const firstRule = { eligibleGroup: '', repeatPolicy: 'allow', allowRepeat: true, voidNoReturnExcluded: true };
+  async function archive(secondNames, secondRule) {
+    const firstNames = roster.map((person) => person.name);
+    const firstHash = await LW.sha256Hex(firstNames.join('\n'));
+    const secondHash = await LW.sha256Hex(secondNames.join('\n'));
+    const secondKeys = secondNames.map((name) => roster.find((person) => person.name === name).key);
+    const record = (id, seq, name, index, names, hash, at, status, rule) => ({
+      id, seq, prizeId: prize.id, prizeName: prize.name, name, key: name, index,
+      candidateCount: names.length, candidatesHash: hash, drawnAt: at, status, rule, video: { state: 'none' },
+      ...(status === 'void' ? { voidReason: '未到場', voidAt, returnToPool: false } : {}),
+    });
+    const records = [
+      record('first', 1, '甲', 0, firstNames, firstHash, firstAt, 'void', firstRule),
+      record('second', 2, '乙', secondNames.indexOf('乙'), secondNames, secondHash, secondAt, 'valid', secondRule),
+    ];
+    const draw = (r, names, keys) => ({
+      id: r.id, seq: r.seq, drawnAt: r.drawnAt, prize: r.prizeName, winner: r.name, winnerKey: r.key,
+      winnerIndex: r.index, candidateCount: r.candidateCount, candidatesSha256: r.candidatesHash,
+      candidates: names, candidateKeys: keys, eligibility: r.rule, status: r.status, video: { state: 'none' },
+      ...(r.status === 'void' ? { void: { reason: '未到場', at: voidAt, returnedToPool: false } } : {}),
+    });
+    const state = { v: 1, title: '活動', session: { id: 'ABC', createdAt: firstAt },
+      people: '甲\n乙', prizes: [prize], records, settings: { allowRepeat: false }, rosterKeyScheme: 2 };
+    const audit = { format: 'lucky-wheel-audit/2', event: { title: '活動', sessionId: 'ABC', sessionCreatedAt: firstAt },
+      prizes: [{ id: prize.id, name: prize.name, quantity: 2, eligibleGroup: '', repeatPolicy: 'allow', drawn: 1 }],
+      participants: firstNames, participantDetails: roster,
+      draws: [draw(records[0], firstNames, roster.map((person) => person.key)), draw(records[1], secondNames, secondKeys)] };
+    const csv = LW.toCSV([[...LW.AUDIT_CSV_HEADER],
+      [1, prize.name, '甲', firstAt, '作廢', '未到場', 2, firstHash, '', '', 'ABC'],
+      [2, prize.name, '乙', secondAt, '有效', '', secondNames.length, secondHash, '', '', 'ABC']]);
+    return LW.makeZip([
+      { name: '包/抽獎紀錄.json', data: JSON.stringify(audit) },
+      { name: '包/中獎名單.csv', data: csv },
+      { name: '包/場次狀態.json', data: JSON.stringify({ format: 'lucky-wheel-session/1', state }) },
+      { name: '包/SHA256SUMS.txt', data: '' },
+    ]);
+  }
+  const currentRule = { ...firstRule };
+  assert.deepEqual(Array.from((await LW.inspectPackage(await archive(['乙'], currentRule))).errors), []);
+  const wrongCandidates = await LW.inspectPackage(await archive(['甲', '乙'], currentRule));
+  assert.ok(wrongCandidates.errors.some((error) => error.includes('實際候選名單與資格規則不符')));
+  const legacyRule = { eligibleGroup: '', repeatPolicy: 'allow', allowRepeat: true };
+  assert.deepEqual(Array.from((await LW.inspectPackage(await archive(['甲', '乙'], legacyRule))).errors), []);
 });
 
 test('standalone inspector verifies candidate, winner, video, and restorable state', async () => {
