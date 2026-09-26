@@ -286,6 +286,34 @@ test('ZIP reader rejects corruption and unsafe filenames', async () => {
   await assert.rejects(LW.readZip(unsafe), /不安全/);
 });
 
+test('large rosters use bounded wheel paint while retaining every candidate index', async () => {
+  let arcs = 0;
+  const surface = {
+    translate() {}, beginPath() {}, closePath() {}, moveTo() {}, fill() {}, stroke() {},
+    arc() { arcs++; },
+    createRadialGradient() { return { addColorStop() {} }; },
+  };
+  const stageContext = vm.createContext({
+    document: { createElement() { return { getContext() { return surface; } }; } },
+    performance: { now: () => 0 },
+    LW: { rgba() { return 'rgba(0,0,0,1)'; }, mod: (n, d) => ((n % d) + d) % d, randomFloat: () => 0.5 },
+  });
+  stageContext.globalThis = stageContext;
+  vm.runInContext(readFileSync(new URL('../js/stage.js', import.meta.url), 'utf8'), stageContext);
+  const labels = Array(50000).fill('參加者');
+  const stage = { theme: { fontBody: 'sans-serif' }, labels, rotation: 0 };
+  stageContext.LW.Stage.prototype.paintWheel.call(stage, labels);
+  assert.ok(arcs <= 722, `painted ${arcs} arcs for ${labels.length} people`);
+  const winnerIndex = 40721;
+  stage.rotation = -((winnerIndex + 0.5) * Math.PI * 2) / labels.length;
+  assert.equal(stageContext.LW.Stage.prototype.pointerIndex.call(stage), winnerIndex);
+  const spin = stageContext.LW.Stage.prototype.spinTo.call(stage, winnerIndex, 8000);
+  stage.rotation = stage.spin.to;
+  assert.equal(stageContext.LW.Stage.prototype.pointerIndex.call(stage), winnerIndex);
+  stage.spin.resolve(winnerIndex);
+  assert.equal(await spin, winnerIndex);
+});
+
 test('eligibility applies group and per-prize repeat rules', () => {
   const people = LW.parsePeople('甲 | 業務\n乙 | 工程\n甲 | 業務');
   assert.equal(people[2].key, '甲 | 業務#2');

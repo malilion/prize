@@ -15,6 +15,7 @@
   const RIM = 34;
   const HUB = 74;
   const BULBS = 28;
+  const MAX_PAINTED_BANDS = 720;
   const INFO = { x: 1150, w: 690 };
   const FOOT_Y = 1000;
 
@@ -275,6 +276,10 @@
       this.drawBulbs(ctx, now);
       this.drawHub(ctx);
       this.drawPointer(ctx);
+      if (this.labels.length > MAX_PAINTED_BANDS) {
+        this.text('大量名單：色帶為縮略示意，抽選依完整名單', WHEEL.cx, 970,
+          { size: 22, weight: 500, color: this.theme.stageInk3, align: 'center' });
+      }
       this.drawInfo(ctx, now);
       this.drawFooter(ctx);
       if (this.recording) this.drawRecBadge(ctx, now);
@@ -358,16 +363,19 @@
         return c;
       }
 
-      const slice = TAU / n;
+      // Subpixel slices cannot be distinguished on an 840px wheel. Keep the full
+      // roster for the pointer and draw outcome, but bound raster work for large lists.
+      const painted = Math.min(n, MAX_PAINTED_BANDS);
+      const slice = TAU / painted;
       const fills = [T.seg1, T.seg2, T.seg3, T.seg4];
       const inks = [T.segInkLight, T.segInkDark, T.segInkLight, T.segInkDark];
-      const colorOf = segmentColors(n, fills.length);
+      const colorOf = segmentColors(painted, fills.length);
 
       g.fillStyle = rgba(T.seg3); // base coat hides anti-aliasing seams between slices
       g.beginPath();
       g.arc(0, 0, r, 0, TAU);
       g.fill();
-      for (let i = 0; i < n; i++) {
+      for (let i = 0; i < painted; i++) {
         g.beginPath();
         g.moveTo(0, 0);
         g.arc(0, 0, r, i * slice, (i + 1) * slice);
