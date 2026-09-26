@@ -1859,7 +1859,7 @@
     try {
       const text = LW.decodeText(await file.arrayBuffer());
       if (busy() || rosterLocked()) return;
-      const isTable = /\.(csv|tsv)$/i.test(file.name) || /csv/.test(file.type);
+      const isTable = LW.rosterImportIsTable(file.name, file.type, text);
       const rows = isTable ? LW.parseCSV(text) : text.split(/\r?\n/).map((line) => [line]);
       const imported = LW.rosterImportFromRows(rows, isTable);
       if (!imported.lines.length) throw new Error('沒有讀到任何名字。請確認每行一位，或 CSV 每一列是一個人');

@@ -91,6 +91,10 @@
   const NAME_HEADER = /^(姓名|名字|名稱|員工姓名|中文姓名|參加者|name|full ?name)$/i;
   const GROUP_HEADER = /^(組別|組別名稱|部門|單位|group|team|department)$/i;
   const ID_HEADER = /^(編號|參加編號|抽獎編號|員工編號|工號|學號|會員編號|識別碼|id|employee ?id|student ?id|member ?id)$/i;
+  function rosterImportIsTable(fileName, mimeType, text) {
+    const firstLine = text.slice(0, text.search(/\r?\n|$/));
+    return /\.(csv|tsv)$/i.test(fileName) || /csv|tab-separated-values/i.test(mimeType) || firstLine.includes('\t');
+  }
   function rosterImportFromRows(rows, isTable = false) {
     const cleaned = rows.map((cells) => cells.map((cell) => String(cell ?? '').trim()))
       .filter((cells) => cells.some(Boolean));
@@ -113,5 +117,5 @@
 
   const rosterLinesFromRows = (rows, isTable = false) => rosterImportFromRows(rows, isTable).lines;
 
-  Object.assign(LW, { parsePeople, parsePeopleLegacy, legacyRosterKeyCollision, rosterIdentifierIssue, allowsRepeat, eligiblePeople, exclusiveCapacity, rosterImportFromRows, rosterLinesFromRows });
+  Object.assign(LW, { parsePeople, parsePeopleLegacy, legacyRosterKeyCollision, rosterIdentifierIssue, allowsRepeat, eligiblePeople, exclusiveCapacity, rosterImportIsTable, rosterImportFromRows, rosterLinesFromRows });
 })(typeof window !== 'undefined' ? window : globalThis);

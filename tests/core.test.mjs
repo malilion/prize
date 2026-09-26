@@ -388,6 +388,18 @@ test('roster import uses named columns without appending unrelated personal data
   assert.equal(LW.rosterLinesFromRows([['A01', '甲'], ['A02', '乙']], true).join('\n'), 'A01 甲\nA02 乙');
 });
 
+test('Excel Unicode text imports as a table and quoted commas do not override tab separators', () => {
+  const text = '員工編號\t姓名\t"備註,含,逗號"\tEmail\n0007\t王小明\t現場\twang@example.com\n';
+  const bytes = Uint8Array.from([0xff, 0xfe, ...Buffer.from(text, 'utf16le')]);
+  const decoded = LW.decodeText(bytes.buffer);
+  assert.equal(decoded, text);
+  assert.equal(LW.rosterImportIsTable('名單.txt', 'text/plain', decoded), true);
+  const rows = LW.parseCSV(decoded);
+  assert.deepEqual(Array.from(rows[0]), ['員工編號', '姓名', '備註,含,逗號', 'Email']);
+  assert.deepEqual(Array.from(LW.rosterImportFromRows(rows, true).lines), ['0007 王小明']);
+  assert.equal(LW.rosterImportIsTable('名單.txt', 'text/plain', '王小明\n陳小華'), false);
+});
+
 test('Vault replaces evidence when durable storage is unavailable', async () => {
   await LW.Vault.replace([{ id: 'old', candidates: ['甲'], video: null }]);
   assert.equal((await LW.Vault.get('old')).candidates[0], '甲');

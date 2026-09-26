@@ -220,9 +220,19 @@
 
   function parseCSV(text) {
     text = text.replace(/^\uFEFF/, '');
-    const firstLine = text.slice(0, text.search(/\r?\n|$/));
-    const delim = [',', '\t', ';'].reduce((best, d) =>
-      firstLine.split(d).length > firstLine.split(best).length ? d : best, ',');
+    const counts = { ',': 0, '\t': 0, ';': 0 };
+    let inHeaderQuote = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (c === '"') {
+        if (inHeaderQuote && text[i + 1] === '"') i++;
+        else inHeaderQuote = !inHeaderQuote;
+      } else if (!inHeaderQuote) {
+        if (c === '\r' || c === '\n') break;
+        if (Object.hasOwn(counts, c)) counts[c]++;
+      }
+    }
+    const delim = [',', '\t', ';'].reduce((best, d) => counts[d] > counts[best] ? d : best, ',');
     const rows = [];
     let row = [], cell = '', quoted = false;
     for (let i = 0; i < text.length; i++) {
