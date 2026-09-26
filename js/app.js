@@ -983,6 +983,11 @@
       add(capacity.available >= capacity.required, `排除重複中獎的獎項尚有 ${capacity.required} 個名額，目前未占用名單有 ${capacity.available} 人`);
       for (const group of capacity.groups) add(group.available >= group.required,
         `「${group.group}」組的排除重複中獎獎項合計尚有 ${group.required} 個名額，目前可用 ${group.available} 人`);
+      const orderRisks = LW.drawOrderRisks(people(), state.records, state.prizes, state.settings);
+      if (orderRisks.repeatBeforeExclusive) add(false,
+        '依目前獎項順序，先抽不限組別且允許重複中獎的獎，可能用掉後續排除重複獎的名額；請先抽排除重複的獎項');
+      for (const group of orderRisks.groups) add(false,
+        `依目前獎項順序，「${group}」組的人可能先被不限組別或允許重複中獎的獎抽走；請先抽該組的限組獎`);
     }
     add(!state.settings.record || LW.Recorder.supported(), '此瀏覽器可執行目前的錄影設定');
     await LW.Vault.ready();

@@ -88,6 +88,51 @@
     };
   }
 
+  function drawOrderRisks(list, records, prizes, settings) {
+    const available = eligiblePeople(list, records, { repeatPolicy: 'exclude' }, { allowRepeat: false });
+    const availableByGroup = new Map();
+    for (const person of available) availableByGroup.set(person.group, (availableByGroup.get(person.group) || 0) + 1);
+    const drawn = new Map();
+    for (const record of records) if (record.status === 'valid') drawn.set(record.prizeId, (drawn.get(record.prizeId) || 0) + 1);
+    const upcoming = prizes.map((prize) => ({
+      group: prize.eligibleGroup || '',
+      count: Math.max(0, prize.qty - (drawn.get(prize.id) || 0)),
+      repeat: allowsRepeat(prize, settings),
+    }));
+    const groupDemands = new Map();
+    const lastGroupDraw = new Map();
+    let exclusiveRequired = 0;
+    let lastExclusiveDraw = -1;
+    for (const [index, prize] of upcoming.entries()) {
+      if (!prize.count || prize.repeat) continue;
+      exclusiveRequired += prize.count;
+      lastExclusiveDraw = index;
+      if (prize.group) {
+        groupDemands.set(prize.group, (groupDemands.get(prize.group) || 0) + prize.count);
+        lastGroupDraw.set(prize.group, index);
+      }
+    }
+    let unrestrictedRepeatBeforeExclusive = 0;
+    const groupExposure = new Map();
+    for (const [index, prize] of upcoming.entries()) {
+      if (!prize.count) continue;
+      if (prize.repeat && !prize.group && index < lastExclusiveDraw) unrestrictedRepeatBeforeExclusive += prize.count;
+      for (const [group, lastIndex] of lastGroupDraw) {
+        if (index >= lastIndex || (prize.group && (prize.group !== group || !prize.repeat))) continue;
+        const canTake = Math.min(prize.count, availableByGroup.get(group) || 0);
+        groupExposure.set(group, (groupExposure.get(group) || 0) + canTake);
+      }
+    }
+    return {
+      repeatBeforeExclusive: exclusiveRequired > 0 && available.length >= exclusiveRequired &&
+        unrestrictedRepeatBeforeExclusive > available.length - exclusiveRequired,
+      groups: [...groupDemands].filter(([group, required]) => {
+        const free = availableByGroup.get(group) || 0;
+        return free >= required && (groupExposure.get(group) || 0) > free - required;
+      }).map(([group]) => group),
+    };
+  }
+
   const NAME_HEADER = /^(姓名|名字|名稱|員工姓名|中文姓名|參加者|name|full ?name)$/i;
   const GROUP_HEADER = /^(組別|組別名稱|部門|單位|group|team|department)$/i;
   const ID_HEADER = /^(編號|參加編號|抽獎編號|員工編號|工號|學號|會員編號|識別碼|id|employee ?id|student ?id|member ?id)$/i;
@@ -117,5 +162,5 @@
 
   const rosterLinesFromRows = (rows, isTable = false) => rosterImportFromRows(rows, isTable).lines;
 
-  Object.assign(LW, { parsePeople, parsePeopleLegacy, legacyRosterKeyCollision, rosterIdentifierIssue, allowsRepeat, eligiblePeople, exclusiveCapacity, rosterImportIsTable, rosterImportFromRows, rosterLinesFromRows });
+  Object.assign(LW, { parsePeople, parsePeopleLegacy, legacyRosterKeyCollision, rosterIdentifierIssue, allowsRepeat, eligiblePeople, exclusiveCapacity, drawOrderRisks, rosterImportIsTable, rosterImportFromRows, rosterLinesFromRows });
 })(typeof window !== 'undefined' ? window : globalThis);

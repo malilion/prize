@@ -439,6 +439,21 @@ test('preflight capacity combines exclusive prize demand by group and excludes h
   assert.equal(returned.groups[0].available, 2);
 });
 
+test('preflight warns when prize order can exhaust later exclusive groups', () => {
+  const people = LW.parsePeople('甲 | 業務\n乙 | 工程');
+  const settings = { allowRepeat: false };
+  const open = { id: 'open', qty: 1, eligibleGroup: '', repeatPolicy: 'exclude' };
+  const group = { id: 'group', qty: 1, eligibleGroup: '業務', repeatPolicy: 'exclude' };
+  assert.deepEqual(Array.from(LW.drawOrderRisks(people, [], [open, group], settings).groups), ['業務']);
+  assert.equal(LW.drawOrderRisks(people, [], [group, open], settings).groups.length, 0);
+  assert.equal(LW.drawOrderRisks(people, [{ prizeId: 'open', key: people[1].key, status: 'valid' }], [open, group], settings).groups.length, 0);
+  const repeat = { id: 'repeat', qty: 1, eligibleGroup: '', repeatPolicy: 'allow' };
+  const two = { id: 'two', qty: 2, eligibleGroup: '', repeatPolicy: 'exclude' };
+  assert.equal(LW.drawOrderRisks(people, [], [repeat, two], settings).repeatBeforeExclusive, true);
+  assert.equal(LW.drawOrderRisks(people, [], [two, repeat], settings).repeatBeforeExclusive, false);
+  assert.deepEqual(Array.from(LW.drawOrderRisks(people, [], [{ ...repeat, eligibleGroup: '業務' }, group], settings).groups), ['業務']);
+});
+
 test('roster import uses named columns without appending unrelated personal data', () => {
   const interpreted = LW.rosterImportFromRows([
     ['員工編號', '姓名', '部門', 'Email'], ['A01', '甲', '業務', 'a@example.com'],
