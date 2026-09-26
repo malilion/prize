@@ -1743,8 +1743,6 @@
 
   $('#people-import').addEventListener('click', () => el.filePeople.click());
 
-  const HEADER = /^(姓名|名字|名稱|員工姓名|中文姓名|參加者|name|full ?name)$/i;
-  const GROUP_HEADER = /^(組別|組別名稱|部門|單位|group|team|department)$/i;
   el.filePeople.addEventListener('change', async () => {
     const file = el.filePeople.files[0];
     el.filePeople.value = '';
@@ -1752,19 +1750,8 @@
     const text = LW.decodeText(await file.arrayBuffer());
     if (busy() || rosterLocked()) return;
     const isTable = /\.(csv|tsv)$/i.test(file.name) || /csv/.test(file.type);
-    let rows = isTable ? LW.parseCSV(text).map((cells) => cells.map((c) => c.trim())) : text.split(/\r?\n/).map((l) => [l.trim()]);
-    rows = rows.filter((cells) => cells.some(Boolean));
-    const nameColumn = rows.length && (isTable || rows.length > 1) ? rows[0].findIndex((c) => HEADER.test(c)) : -1;
-    const groupColumn = rows.length && (isTable || rows.length > 1) ? rows[0].findIndex((c) => GROUP_HEADER.test(c)) : -1;
-    if (nameColumn >= 0) rows.shift();
-    const lines = rows.map((cells) => {
-      if (nameColumn >= 0 && groupColumn >= 0) {
-        const name = (cells[nameColumn] || '').replace(/\s+/g, ' ').trim();
-        const group = (cells[groupColumn] || '').replace(/\s+/g, ' ').trim();
-        return name ? `${name}${group ? ` | ${group}` : ''}` : '';
-      }
-      return cells.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-    }).filter(Boolean);
+    const rows = isTable ? LW.parseCSV(text) : text.split(/\r?\n/).map((line) => [line]);
+    const lines = LW.rosterLinesFromRows(rows, isTable);
     if (!lines.length) {
       toast(`「${file.name}」裡沒有讀到任何名字。請確認每行一位，或 CSV 每一列是一個人。`, { tone: 'error', timeout: 0 });
       return;

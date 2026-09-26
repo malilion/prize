@@ -234,6 +234,16 @@ test('eligibility applies group and per-prize repeat rules', () => {
   assert.equal(LW.eligiblePeople(people, records, { eligibleGroup: '業務', repeatPolicy: 'allow' }, { allowRepeat: false }).length, 2);
 });
 
+test('roster import uses named columns without appending unrelated personal data', () => {
+  assert.equal(LW.rosterLinesFromRows([
+    ['姓名', '電話', 'Email'], ['甲', '0912-345-678', 'a@example.com'], ['乙', '', 'b@example.com'],
+  ], true).join('\n'), '甲\n乙');
+  assert.equal(LW.rosterLinesFromRows([
+    ['姓名', '部門', '員工編號'], ['甲', '業務', 'A01'], ['乙', '工程', 'B02'],
+  ], true).join('\n'), '甲 | 業務\n乙 | 工程');
+  assert.equal(LW.rosterLinesFromRows([['A01', '甲'], ['A02', '乙']], true).join('\n'), 'A01 甲\nA02 乙');
+});
+
 test('Vault replaces evidence when durable storage is unavailable', async () => {
   await LW.Vault.replace([{ id: 'old', candidates: ['甲'], video: null }]);
   assert.equal((await LW.Vault.get('old')).candidates[0], '甲');
