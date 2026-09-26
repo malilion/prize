@@ -143,6 +143,8 @@
 
   const initialRead = LW.Store.read();
   const state = loadState(initialRead.status === 'ok' && LW.Store.validState(initialRead.value, VERSION) ? initialRead.value : null);
+  let exportReceipt = LW.normalizeExportReceipt(LW.Store.getPref('lastExportReceipt', null), state.session.id);
+  let exportReceiptSaved = !!exportReceipt;
   LW.Vault.setGeneration(state.vaultGeneration);
   let phase = 'idle'; // idle → drawing → saving → result → idle
   let zipping = false;
@@ -660,6 +662,19 @@
     el.exportCsv.disabled = !state.records.length;
     el.exportZip.disabled = !state.records.length || busy() || zipping;
     el.verify.disabled = !readyVideos().length;
+    renderExportReceipt();
+  }
+
+  function renderExportReceipt() {
+    const visible = exportReceipt && exportReceipt.sessionId === state.session.id;
+    $('#export-hash').hidden = !visible;
+    if (!visible) return;
+    $('#export-file-name').textContent = exportReceipt.fileName;
+    const time = $('#export-time');
+    time.dateTime = exportReceipt.exportedAt;
+    time.textContent = LW.formatDateTime(exportReceipt.exportedAt);
+    $('#export-hash-value').textContent = exportReceipt.sha256;
+    $('#export-receipt-warning').hidden = exportReceiptSaved;
   }
 
   /* ----- settings ----- */
@@ -1251,7 +1266,6 @@
   async function exportPackage(force = false) {
     if (zipping || busy() || (!force && !state.records.length)) return;
     zipping = true;
-    $('#export-hash').hidden = true;
     renderAll();
     const label = el.exportZip.querySelector('.btn__label');
     el.exportZip.disabled = true;
@@ -1297,13 +1311,17 @@
         const packageHash = await LW.sha256Hex(zip);
         await assertLock();
         if (storageProblem || staleState || !freshStore()) throw new Error('打包期間場次資料已變更，請重新整理後重新匯出');
-        LW.download(zip, `${folder}.zip`);
-        $('#export-hash-value').textContent = packageHash;
-        $('#export-hash').hidden = false;
+        const fileName = `${folder}.zip`;
+        LW.download(zip, fileName);
+        exportReceipt = LW.normalizeExportReceipt({ sessionId: state.session.id, fileName, sha256: packageHash, exportedAt: now.toISOString() }, state.session.id);
+        exportReceiptSaved = LW.Store.setPref('lastExportReceipt', exportReceipt);
         for (const v of videos) v.record.video.downloaded = true;
         persist(true);
-        if (missing.length || missingSnapshots.length) {
-          toast(`憑證包已下載，但缺少 ${missing.length} 段錄影、${missingSnapshots.length} 份候選名單或識別鍵快照；這份備份無法通過完整驗證。`, { tone: 'error', timeout: 0 });
+        if (missing.length || missingSnapshots.length || !exportReceiptSaved) {
+          const incomplete = missing.length || missingSnapshots.length
+            ? `缺少 ${missing.length} 段錄影、${missingSnapshots.length} 份候選名單或識別鍵快照；這份備份無法通過完整驗證` : '';
+          const unsaved = exportReceiptSaved ? '' : '指紋收據無法留存在瀏覽器，請立即下載文字收據';
+          toast(`憑證包已下載，但${[incomplete, unsaved].filter(Boolean).join('；')}。`, { tone: 'error', timeout: 0 });
         } else {
           toast(`憑證包已下載（${LW.formatBytes(zip.size)}）`);
         }
@@ -1961,6 +1979,21 @@
   });
   el.exportCsv.addEventListener('click', exportCSV);
   el.exportZip.addEventListener('click', () => exportPackage());
+  $('#export-hash-copy').addEventListener('click', async () => {
+    if (!exportReceipt || exportReceipt.sessionId !== state.session.id) return;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('剪貼簿不可用');
+      await navigator.clipboard.writeText(exportReceipt.sha256);
+      toast('已複製 ZIP 的 SHA-256');
+    } catch (_) {
+      toast('無法自動複製。請選取畫面上的 SHA-256 手動複製。', { tone: 'error' });
+    }
+  });
+  $('#export-receipt-download').addEventListener('click', () => {
+    if (!exportReceipt || exportReceipt.sessionId !== state.session.id) return;
+    LW.download(new Blob([LW.exportReceiptText(exportReceipt)], { type: 'text/plain;charset=utf-8' }),
+      `${exportReceipt.fileName.slice(0, -4)}_SHA256.txt`);
+  });
   el.verify.addEventListener('click', () => el.fileVerify.click());
   el.fileVerify.addEventListener('change', () => {
     const file = el.fileVerify.files[0];
@@ -2022,6 +2055,12 @@
 
   window.addEventListener('pagehide', () => persist(true));
   window.addEventListener('storage', (event) => {
+    if (event.key === 'lucky-wheel/pref/lastExportReceipt') {
+      exportReceipt = LW.normalizeExportReceipt(LW.Store.getPref('lastExportReceipt', null), state.session.id);
+      exportReceiptSaved = !!exportReceipt;
+      renderExportReceipt();
+      return;
+    }
     if (event.key !== LW.Store.stateKey || event.newValue === persistedSnapshot) return;
     markStale();
   });

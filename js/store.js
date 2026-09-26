@@ -56,7 +56,12 @@
       }
     },
     setPref(key, value) {
-      try { localStorage.setItem(`lucky-wheel/pref/${key}`, JSON.stringify(value)); } catch (_) { /* optional */ }
+      try {
+        localStorage.setItem(`lucky-wheel/pref/${key}`, JSON.stringify(value));
+        return true;
+      } catch (_) {
+        return false;
+      }
     },
   };
 

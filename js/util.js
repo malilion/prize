@@ -287,6 +287,29 @@
     return (chars.length > max ? chars.slice(0, max).join('').trim() : cleaned) || '未命名';
   }
 
+  function normalizeExportReceipt(value, sessionId) {
+    if (typeof sessionId !== 'string' || !/^[^\u0000-\u001f\u007f]{1,16}$/.test(sessionId) ||
+      !value || typeof value !== 'object' || value.sessionId !== sessionId ||
+      typeof value.fileName !== 'string' || value.fileName.length > 120 ||
+      !/^[^\\/\u0000-\u001f\u007f]+\.zip$/i.test(value.fileName) ||
+      typeof value.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(value.sha256) ||
+      typeof value.exportedAt !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value.exportedAt) ||
+      Number.isNaN(Date.parse(value.exportedAt)) || new Date(value.exportedAt).toISOString() !== value.exportedAt) return null;
+    return { sessionId, fileName: value.fileName, sha256: value.sha256, exportedAt: value.exportedAt };
+  }
+
+  function exportReceiptText(receipt) {
+    return [
+      '抽獎憑證包 SHA-256 收據',
+      `場次代碼：${receipt.sessionId}`,
+      `ZIP 檔名：${receipt.fileName}`,
+      `產生時間（UTC）：${receipt.exportedAt}`,
+      `ZIP SHA-256：${receipt.sha256}`,
+      '',
+      '此指紋只對上述 ZIP 檔案有效。請保存原始 ZIP，並在活動時透過獨立管道公布此指紋，供驗證者比對。',
+    ].join('\r\n') + '\r\n';
+  }
+
   function download(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -340,7 +363,7 @@
     randomInt, randomFloat, sessionCode, uid,
     sha256Hex, sha256Sync,
     toCSV, parseCSV, decodeText,
-    safeFilename, download,
+    safeFilename, normalizeExportReceipt, exportReceiptText, download,
     parseColor, rgba,
   });
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -17,8 +17,23 @@ const { LW } = context;
 test('state store reports a failed browser write', () => {
   context.localStorage = { setItem() { throw new Error('QuotaExceededError'); } };
   assert.equal(LW.Store.save({ records: [] }), false);
+  assert.equal(LW.Store.setPref('lastExportReceipt', {}), false);
   context.localStorage = { setItem() {} };
   assert.equal(LW.Store.save({ records: [] }), true);
+  assert.equal(LW.Store.setPref('lastExportReceipt', {}), true);
+});
+
+test('export receipt binds a ZIP hash to its file and session', () => {
+  const receipt = { sessionId: 'ABCD-EFGH', fileName: '抽獎憑證包.zip', sha256: 'a'.repeat(64), exportedAt: '2026-09-27T01:02:03.000Z' };
+  assert.equal(LW.normalizeExportReceipt(receipt, receipt.sessionId).sha256, receipt.sha256);
+  assert.equal(LW.normalizeExportReceipt(receipt, 'OTHER'), null);
+  assert.equal(LW.normalizeExportReceipt({ ...receipt, sessionId: 'BAD\nSESSION' }, 'BAD\nSESSION'), null);
+  assert.equal(LW.normalizeExportReceipt({ ...receipt, fileName: '../包.zip' }, receipt.sessionId), null);
+  assert.equal(LW.normalizeExportReceipt({ ...receipt, sha256: 'invalid' }, receipt.sessionId), null);
+  assert.equal(LW.normalizeExportReceipt({ ...receipt, exportedAt: '2026-02-30T01:02:03.000Z' }, receipt.sessionId), null);
+  const text = LW.exportReceiptText(receipt);
+  assert.match(text, /ZIP 檔名：抽獎憑證包\.zip/);
+  assert.match(text, new RegExp(`ZIP SHA-256：${receipt.sha256}`));
 });
 
 test('draw shortcuts require a fresh key press outside editing and confirmation controls', () => {

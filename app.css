@@ -399,6 +399,8 @@ input[type="range"] { width: 100%; margin: var(--space-xs) 0; accent-color: var(
 .check-ok { color: #aad799; }
 .check-bad { color: #e9ad86; }
 .hash-value { overflow-wrap: anywhere; user-select: all; }
+.export-receipt { display: grid; gap: var(--space-xs); padding: var(--space-sm); border: 1px solid var(--color-rule); border-radius: var(--radius-sm); background: var(--color-paper-3); }
+.export-receipt__title { font-weight: 700; }
 @media (max-width: 560px) { .prize__rules { grid-template-columns: 1fr; } }
 .prize__index { flex: none; width: var(--space-lg); font-size: var(--text-sm); color: var(--color-ink-3); }
 .prize__name { flex: 1 1 auto; min-width: 0; }
