@@ -497,6 +497,8 @@ input[type="range"] { width: 100%; margin: var(--space-xs) 0; accent-color: var(
 .dialog__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-xs); padding-top: var(--space-xs); }
 .dialog.is-ok .dialog__title { color: var(--color-ok); }
 .dialog.is-bad .dialog__title { color: var(--color-danger-text); }
+.import-preview { max-height: 12rem; overflow: auto; padding: var(--space-sm) var(--space-sm) var(--space-sm) 2.5rem; border: 1px solid var(--color-rule); border-radius: var(--radius-sm); background: var(--color-paper-1); font-size: var(--text-sm); list-style: decimal; overflow-wrap: anywhere; }
+.import-preview li + li { margin-top: var(--space-2xs); }
 .player { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: var(--radius-sm); background: var(--stage-bg); }
 .meta { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-2xs) var(--space-md); font-size: var(--text-sm); }
 .meta dt { color: var(--color-ink-3); }

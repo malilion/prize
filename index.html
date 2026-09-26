@@ -118,7 +118,7 @@
             <legend class="sr-only">抽獎名單</legend>
             <label class="field" for="people-text">
               <span class="field__label">每行一位，可從 Excel 直接貼上</span>
-              <textarea id="people-text" class="input textarea" rows="14" spellcheck="false" autocomplete="off" aria-describedby="people-help" placeholder="A001 陳怡君&#10;A002 林家豪"></textarea>
+              <textarea id="people-text" class="input textarea" rows="14" maxlength="2000000" spellcheck="false" autocomplete="off" aria-describedby="people-help" placeholder="A001 陳怡君&#10;A002 林家豪"></textarea>
               <span class="field__help" id="people-help"></span>
             </label>
             <div class="row">
@@ -252,6 +252,20 @@
         <button class="btn btn--danger" value="confirm" id="reset-go" disabled>重設抽獎</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog class="dialog" id="dlg-people-import" aria-labelledby="dlg-people-import-title">
+    <div class="dialog__body">
+      <h2 class="dialog__title" id="dlg-people-import-title">確認匯入名單</h2>
+      <p class="dialog__lead" id="people-import-summary"></p>
+      <p class="dialog__warn" id="people-import-warning" hidden></p>
+      <p class="dialog__note" id="people-import-columns"></p>
+      <ol class="import-preview" id="people-import-preview" aria-label="即將匯入的前幾位參加者"></ol>
+      <div class="dialog__actions">
+        <button class="btn btn--ghost" type="button" data-close>取消</button>
+        <button class="btn btn--primary" id="people-import-confirm" type="button">匯入名單</button>
+      </div>
+    </div>
   </dialog>
 
   <dialog class="dialog dialog--wide" id="dlg-video" aria-labelledby="dlg-video-title">

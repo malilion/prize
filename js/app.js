@@ -6,6 +6,8 @@
   const PREROLL_MS = 1000;   // recording starts this long before the wheel moves
   const POSTROLL_MS = 3000;  // …and keeps rolling this long on the result
   const VERSION = 1;
+  const MAX_PEOPLE_CHARS = 2000000;
+  const MAX_IMPORT_BYTES = 32 * 1024 * 1024;
   const DEFAULT_SETTINGS = { spinSeconds: 8, record: true, autoDownload: true, sound: true, allowRepeat: false };
   const SAMPLE = {
     title: '年度尾牙抽獎',
@@ -541,14 +543,28 @@
     $('#people-lock-note').hidden = !rosterLocked();
   }
 
-  function setPeople(text) {
-    if (busy() || rosterLocked()) return;
+  function setPeople(text, { saveNow = false } = {}) {
+    if (busy() || rosterLocked() || storageProblem || staleState || !freshStore()) return false;
+    if (text.length > MAX_PEOPLE_CHARS) {
+      toast('名單超過可保存的長度，請先縮短再匯入。', { tone: 'error' });
+      return false;
+    }
+    const previous = state.people;
+    const wasSample = state.sample;
     state.people = text;
     el.peopleText.value = text;
     state.sample = false;
-    persist();
+    if (saveNow && !persist(true)) {
+      state.people = previous;
+      state.sample = wasSample;
+      el.peopleText.value = previous;
+      renderAll();
+      return false;
+    }
+    if (!saveNow) persist();
     renderAll();
     syncStage();
+    return true;
   }
 
   /* ----- records ----- */
@@ -699,7 +715,10 @@
           toast('抽獎進行中，等這一抽結束再復原。', { tone: 'error' });
           return;
         }
-        action.run();
+        if (action.run() === false) {
+          toast('無法完成復原，請檢查場次儲存狀態。', { tone: 'error' });
+          return;
+        }
         close();
       });
       node.appendChild(b);
@@ -1774,24 +1793,65 @@
     syncSoon();
   });
 
+  let pendingPeopleImport = null;
+  const importDialog = $('#dlg-people-import');
+  importDialog.addEventListener('close', () => { pendingPeopleImport = null; });
   $('#people-import').addEventListener('click', () => el.filePeople.click());
 
   el.filePeople.addEventListener('change', async () => {
     const file = el.filePeople.files[0];
     el.filePeople.value = '';
     if (!file) return;
-    const text = LW.decodeText(await file.arrayBuffer());
-    if (busy() || rosterLocked()) return;
-    const isTable = /\.(csv|tsv)$/i.test(file.name) || /csv/.test(file.type);
-    const rows = isTable ? LW.parseCSV(text) : text.split(/\r?\n/).map((line) => [line]);
-    const lines = LW.rosterLinesFromRows(rows, isTable);
-    if (!lines.length) {
-      toast(`「${file.name}」裡沒有讀到任何名字。請確認每行一位，或 CSV 每一列是一個人。`, { tone: 'error', timeout: 0 });
+    if (file.size > MAX_IMPORT_BYTES) {
+      toast('名單檔案超過 32 MB，請移除不需要的欄位後再匯入。', { tone: 'error' });
+      return;
+    }
+    try {
+      const text = LW.decodeText(await file.arrayBuffer());
+      if (busy() || rosterLocked()) return;
+      const isTable = /\.(csv|tsv)$/i.test(file.name) || /csv/.test(file.type);
+      const rows = isTable ? LW.parseCSV(text) : text.split(/\r?\n/).map((line) => [line]);
+      const imported = LW.rosterImportFromRows(rows, isTable);
+      if (!imported.lines.length) throw new Error('沒有讀到任何名字。請確認每行一位，或 CSV 每一列是一個人');
+      const next = imported.lines.join('\n');
+      if (next.length > MAX_PEOPLE_CHARS) throw new Error('匯入名單超過可保存的長度，請先縮短或分批整理名單');
+      pendingPeopleImport = { text: next, fileName: file.name, count: imported.lines.length };
+      $('#people-import-summary').textContent = `「${file.name}」共 ${imported.lines.length} 人。確認後會取代目前 ${people().length} 人；下方預覽前 ${Math.min(8, imported.lines.length)} 人。`;
+      $('#people-import-columns').textContent = isTable
+        ? imported.hasNameHeader
+          ? `辨識欄位：姓名${imported.hasIdColumn ? '、編號' : ''}${imported.hasGroupColumn ? '、組別' : ''}；其他欄位不匯入。`
+          : '未辨識到姓名表頭，會把每列的欄位合併為一位參加者。'
+        : '文字檔每行匯入一位參加者。';
+      const warning = $('#people-import-warning');
+      warning.hidden = !isTable || imported.hasNameHeader;
+      warning.textContent = warning.hidden ? '' : '請確認預覽中沒有電話、Email 等不應顯示在轉盤上的資料。';
+      const preview = $('#people-import-preview');
+      preview.replaceChildren(...imported.lines.slice(0, 8).map((line) => {
+        const item = document.createElement('li');
+        item.textContent = line;
+        return item;
+      }));
+      openDialog(importDialog);
+    } catch (err) {
+      pendingPeopleImport = null;
+      toast(`無法匯入「${file.name}」：${err.message || err}`, { tone: 'error', timeout: 0 });
+    }
+  });
+
+  $('#people-import-confirm').addEventListener('click', () => {
+    if (!pendingPeopleImport) return;
+    const imported = pendingPeopleImport;
+    importDialog.close();
+    if (busy() || rosterLocked() || storageProblem || staleState || !freshStore()) {
+      toast('場次已變更或無法安全保存，請重新整理後再匯入。', { tone: 'error', timeout: 0 });
       return;
     }
     const before = state.people;
-    setPeople(lines.join('\n'));
-    toast(`已從「${file.name}」匯入 ${lines.length} 人，原本的名單已取代`, { action: { label: '復原', run: () => setPeople(before) } });
+    if (!setPeople(imported.text, { saveNow: true })) {
+      toast('名單未能保存，原本名單已保留。', { tone: 'error', timeout: 0 });
+      return;
+    }
+    toast(`已從「${imported.fileName}」匯入 ${imported.count} 人，原本的名單已取代`, { action: { label: '復原', run: () => setPeople(before, { saveNow: true }) } });
   });
 
   el.dedupe.addEventListener('click', () => {
@@ -1802,16 +1862,22 @@
     });
     const removed = people().length - kept.length;
     const before = state.people;
-    setPeople(kept.map((p) => p.group ? `${p.name} | ${p.group}` : p.name).join('\n'));
-    toast(`已移除 ${removed} 個重複的名字`, { action: { label: '復原', run: () => setPeople(before) } });
+    if (!setPeople(kept.map((p) => p.group ? `${p.name} | ${p.group}` : p.name).join('\n'), { saveNow: true })) {
+      toast('無法保存整理後的名單，原本名單已保留。', { tone: 'error' });
+      return;
+    }
+    toast(`已移除 ${removed} 個重複的名字`, { action: { label: '復原', run: () => setPeople(before, { saveNow: true }) } });
   });
 
   $('#people-clear').addEventListener('click', () => {
     if (!state.people.trim()) return;
     const before = state.people;
-    setPeople('');
+    if (!setPeople('', { saveNow: true })) {
+      toast('無法清空並保存名單，原本名單已保留。', { tone: 'error' });
+      return;
+    }
     el.peopleText.focus();
-    toast('名單已清空', { action: { label: '復原', run: () => setPeople(before) } });
+    toast('名單已清空', { action: { label: '復原', run: () => setPeople(before, { saveNow: true }) } });
   });
 
   el.optExclude.addEventListener('change', () => {

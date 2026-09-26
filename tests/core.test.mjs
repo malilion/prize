@@ -316,6 +316,16 @@ test('preflight capacity combines exclusive prize demand by group and excludes h
 });
 
 test('roster import uses named columns without appending unrelated personal data', () => {
+  const interpreted = LW.rosterImportFromRows([
+    ['員工編號', '姓名', '部門', 'Email'], ['A01', '甲', '業務', 'a@example.com'],
+  ], true);
+  assert.equal(interpreted.hasNameHeader, true);
+  assert.equal(interpreted.hasIdColumn, true);
+  assert.equal(interpreted.hasGroupColumn, true);
+  assert.deepEqual(Array.from(interpreted.lines), ['A01 甲 | 業務']);
+  const unheaded = LW.rosterImportFromRows([['A01', '甲', 'a@example.com']], true);
+  assert.equal(unheaded.hasNameHeader, false);
+  assert.deepEqual(Array.from(unheaded.lines), ['A01 甲 a@example.com']);
   assert.equal(LW.rosterLinesFromRows([
     ['姓名', '電話', 'Email'], ['甲', '0912-345-678', 'a@example.com'], ['乙', '', 'b@example.com'],
   ], true).join('\n'), '甲\n乙');

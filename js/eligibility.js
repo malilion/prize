@@ -51,7 +51,7 @@
   const NAME_HEADER = /^(姓名|名字|名稱|員工姓名|中文姓名|參加者|name|full ?name)$/i;
   const GROUP_HEADER = /^(組別|組別名稱|部門|單位|group|team|department)$/i;
   const ID_HEADER = /^(編號|參加編號|抽獎編號|員工編號|工號|學號|會員編號|識別碼|id|employee ?id|student ?id|member ?id)$/i;
-  function rosterLinesFromRows(rows, isTable = false) {
+  function rosterImportFromRows(rows, isTable = false) {
     const cleaned = rows.map((cells) => cells.map((cell) => String(cell ?? '').trim()))
       .filter((cells) => cells.some(Boolean));
     const header = cleaned[0] || [];
@@ -59,7 +59,7 @@
     const groupColumn = isTable || cleaned.length > 1 ? header.findIndex((cell) => GROUP_HEADER.test(cell)) : -1;
     const idColumn = nameColumn >= 0 ? header.findIndex((cell) => ID_HEADER.test(cell)) : -1;
     if (nameColumn >= 0) cleaned.shift();
-    return cleaned.map((cells) => {
+    const lines = cleaned.map((cells) => {
       if (nameColumn >= 0) {
         const name = (cells[nameColumn] || '').replace(/\s+/g, ' ').trim();
         const group = groupColumn >= 0 ? (cells[groupColumn] || '').replace(/\s+/g, ' ').trim() : '';
@@ -68,7 +68,10 @@
       }
       return cells.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
     }).filter(Boolean);
+    return { lines, hasNameHeader: nameColumn >= 0, hasGroupColumn: groupColumn >= 0 && nameColumn >= 0, hasIdColumn: idColumn >= 0 };
   }
 
-  Object.assign(LW, { parsePeople, allowsRepeat, eligiblePeople, exclusiveCapacity, rosterLinesFromRows });
+  const rosterLinesFromRows = (rows, isTable = false) => rosterImportFromRows(rows, isTable).lines;
+
+  Object.assign(LW, { parsePeople, allowsRepeat, eligiblePeople, exclusiveCapacity, rosterImportFromRows, rosterLinesFromRows });
 })(typeof window !== 'undefined' ? window : globalThis);
