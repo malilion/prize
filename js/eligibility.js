@@ -112,11 +112,27 @@
         lastGroupDraw.set(prize.group, index);
       }
     }
-    let unrestrictedRepeatBeforeExclusive = 0;
+    // Earlier repeat-allowed prizes can still choose new people; count that worst-case
+    // loss of availability without counting people already used by exclusive prizes twice.
+    let earlierExclusive = 0;
+    let freshRepeatWinners = 0;
+    const earlierExclusiveByGroup = new Map();
+    const freshRepeatByGroup = new Map();
     const groupExposure = new Map();
     for (const [index, prize] of upcoming.entries()) {
       if (!prize.count) continue;
-      if (prize.repeat && !prize.group && index < lastExclusiveDraw) unrestrictedRepeatBeforeExclusive += prize.count;
+      if (!prize.repeat) {
+        earlierExclusive += prize.count;
+        if (prize.group) earlierExclusiveByGroup.set(prize.group, (earlierExclusiveByGroup.get(prize.group) || 0) + prize.count);
+      } else if (index < lastExclusiveDraw) {
+        const freeOverall = available.length - earlierExclusive - freshRepeatWinners;
+        const freeInGroup = prize.group
+          ? (availableByGroup.get(prize.group) || 0) - (earlierExclusiveByGroup.get(prize.group) || 0) - (freshRepeatByGroup.get(prize.group) || 0)
+          : freeOverall;
+        const fresh = Math.max(0, Math.min(prize.count, freeOverall, freeInGroup));
+        freshRepeatWinners += fresh;
+        if (prize.group) freshRepeatByGroup.set(prize.group, (freshRepeatByGroup.get(prize.group) || 0) + fresh);
+      }
       for (const [group, lastIndex] of lastGroupDraw) {
         if (index >= lastIndex || (prize.group && (prize.group !== group || !prize.repeat))) continue;
         const canTake = Math.min(prize.count, availableByGroup.get(group) || 0);
@@ -125,7 +141,7 @@
     }
     return {
       repeatBeforeExclusive: exclusiveRequired > 0 && available.length >= exclusiveRequired &&
-        unrestrictedRepeatBeforeExclusive > available.length - exclusiveRequired,
+        freshRepeatWinners > available.length - exclusiveRequired,
       groups: [...groupDemands].filter(([group, required]) => {
         const free = availableByGroup.get(group) || 0;
         return free >= required && (groupExposure.get(group) || 0) > free - required;

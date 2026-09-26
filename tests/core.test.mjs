@@ -452,6 +452,36 @@ test('preflight warns when prize order can exhaust later exclusive groups', () =
   assert.equal(LW.drawOrderRisks(people, [], [repeat, two], settings).repeatBeforeExclusive, true);
   assert.equal(LW.drawOrderRisks(people, [], [two, repeat], settings).repeatBeforeExclusive, false);
   assert.deepEqual(Array.from(LW.drawOrderRisks(people, [], [{ ...repeat, eligibleGroup: '業務' }, group], settings).groups), ['業務']);
+  assert.equal(LW.drawOrderRisks(people, [], [{ ...repeat, eligibleGroup: '業務' }, two], settings).repeatBeforeExclusive, true);
+  assert.equal(LW.drawOrderRisks(people, [], [group, { ...repeat, eligibleGroup: '業務' }, open], settings).repeatBeforeExclusive, false);
+});
+
+test('preflight order warnings match all outcomes of small three-draw sessions', () => {
+  const settings = { allowRepeat: false };
+  const templates = [];
+  for (const group of ['', 'A', 'B']) for (const repeatPolicy of ['exclude', 'allow']) templates.push({ group, repeatPolicy });
+  const canFail = (list, records, prizes, index = 0) => {
+    if (index === prizes.length) return false;
+    const pool = LW.eligiblePeople(list, records, prizes[index], settings);
+    if (!pool.length) return true;
+    return pool.some((person) => canFail(list, [...records, { key: person.key, status: 'valid', prizeId: prizes[index].id }], prizes, index + 1));
+  };
+  let checked = 0;
+  for (let count = 1; count <= 3; count++) for (let mask = 0; mask < 2 ** count; mask++) {
+    const list = Array.from({ length: count }, (_, index) => ({ name: String(index), key: String(index), group: (mask >> index) & 1 ? 'A' : 'B' }));
+    for (const first of templates) for (const second of templates) for (const third of templates) {
+      const prizes = [first, second, third].map((prize, index) => ({ id: String(index), qty: 1, eligibleGroup: prize.group, repeatPolicy: prize.repeatPolicy }));
+      const demands = prizes.filter((prize) => prize.repeatPolicy === 'exclude').map((prize) => ({ group: prize.eligibleGroup, count: 1 }));
+      const capacity = LW.exclusiveCapacity(list, [], demands);
+      if (capacity.available < capacity.required || capacity.groups.some((group) => group.available < group.required)) continue;
+      if (prizes.some((prize) => prize.repeatPolicy === 'allow' && !LW.eligiblePeople(list, [], prize, settings).length)) continue;
+      const risks = LW.drawOrderRisks(list, [], prizes, settings);
+      assert.equal(risks.repeatBeforeExclusive || risks.groups.length > 0, canFail(list, [], prizes),
+        `名單 ${list.map((person) => person.group).join('')}、獎項 ${prizes.map((prize) => `${prize.eligibleGroup || '*'}:${prize.repeatPolicy}`).join(', ')}`);
+      checked++;
+    }
+  }
+  assert.equal(checked, 1840);
 });
 
 test('roster import uses named columns without appending unrelated personal data', () => {

@@ -985,7 +985,7 @@
         `「${group.group}」組的排除重複中獎獎項合計尚有 ${group.required} 個名額，目前可用 ${group.available} 人`);
       const orderRisks = LW.drawOrderRisks(people(), state.records, state.prizes, state.settings);
       if (orderRisks.repeatBeforeExclusive) add(false,
-        '依目前獎項順序，先抽不限組別且允許重複中獎的獎，可能用掉後續排除重複獎的名額；請先抽排除重複的獎項');
+        '依目前獎項順序，先抽允許重複中獎的獎，可能用掉後續排除重複獎需要的人；請先抽排除重複的獎項');
       for (const group of orderRisks.groups) add(false,
         `依目前獎項順序，「${group}」組的人可能先被不限組別或允許重複中獎的獎抽走；請先抽該組的限組獎`);
     }
