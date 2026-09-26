@@ -9,6 +9,7 @@
   const STATE_KEY = 'lucky-wheel/state/v1';
 
   const Store = {
+    stateKey: STATE_KEY,
     load() {
       try {
         const raw = localStorage.getItem(STATE_KEY);
@@ -41,6 +42,8 @@
 
   const DB_NAME = 'lucky-wheel';
   const STORE_NAME = 'draws';
+  const LOCK_STORE = 'locks';
+  const DRAW_LOCK_MS = 30000;
   let memory = new Map();
   let dbPromise = null;
 
@@ -48,9 +51,15 @@
     if (dbPromise) return dbPromise;
     dbPromise = new Promise((resolve) => {
       try {
-        const req = indexedDB.open(DB_NAME, 1);
-        req.onupgradeneeded = () => req.result.createObjectStore(STORE_NAME, { keyPath: 'id' });
-        req.onsuccess = () => resolve(req.result);
+        const req = indexedDB.open(DB_NAME, 2);
+        req.onupgradeneeded = () => {
+          if (!req.result.objectStoreNames.contains(STORE_NAME)) req.result.createObjectStore(STORE_NAME, { keyPath: 'id' });
+          if (!req.result.objectStoreNames.contains(LOCK_STORE)) req.result.createObjectStore(LOCK_STORE, { keyPath: 'id' });
+        };
+        req.onsuccess = () => {
+          req.result.onversionchange = () => req.result.close();
+          resolve(req.result);
+        };
         req.onerror = () => resolve(null);
         req.onblocked = () => resolve(null);
       } catch (_) {
@@ -72,6 +81,63 @@
       tx.onabort = () => reject(tx.error);
     });
   }
+
+  function lockError() {
+    return Object.assign(new Error('此場次正在另一個分頁操作，或無法取得跨分頁鎖定。請關閉其他操作分頁後重試。'), { lockLost: true });
+  }
+
+  /** IndexedDB readwrite transactions serialize claims across tabs when Web Locks is absent. */
+  function lockTransaction(db, id, owner, operation) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(LOCK_STORE, 'readwrite');
+      const store = tx.objectStore(LOCK_STORE);
+      const request = store.get(id);
+      let accepted = false;
+      request.onsuccess = () => {
+        const current = request.result;
+        const now = Date.now();
+        if (operation === 'claim' && (!current || current.expiresAt <= now)) {
+          store.put({ id, owner, expiresAt: now + DRAW_LOCK_MS });
+          accepted = true;
+        } else if (current && current.owner === owner) {
+          if (operation === 'renew') store.put({ id, owner, expiresAt: now + DRAW_LOCK_MS });
+          if (operation === 'release') store.delete(id);
+          accepted = true;
+        }
+      };
+      tx.oncomplete = () => resolve(accepted);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  }
+
+  const DrawGate = {
+    async run(sessionId, action) {
+      const id = `draw/${sessionId}`;
+      if (typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) {
+        return navigator.locks.request(id, { mode: 'exclusive', ifAvailable: true }, (lock) => {
+          if (!lock) throw lockError();
+          return action(async () => {});
+        });
+      }
+      const db = await openDB();
+      if (!db) throw lockError();
+      const owner = LW.uid('lock');
+      if (!await lockTransaction(db, id, owner, 'claim')) throw lockError();
+      let lost = false;
+      const renew = setInterval(() => {
+        lockTransaction(db, id, owner, 'renew').then((ok) => { if (!ok) lost = true; }).catch(() => { lost = true; });
+      }, DRAW_LOCK_MS / 3);
+      try {
+        return await action(async () => {
+          if (lost || !await lockTransaction(db, id, owner, 'renew')) throw lockError();
+        });
+      } finally {
+        clearInterval(renew);
+        try { await lockTransaction(db, id, owner, 'release'); } catch (_) { /* lease expires */ }
+      }
+    },
+  };
 
   const Vault = {
     /** true once IndexedDB is open; false means evidence lives in memory until downloaded */
@@ -151,5 +217,5 @@
     throw new Error('場次設定無法儲存；原場次與錄影已保留');
   }
 
-  Object.assign(LW, { Store, Vault, replaceSession });
+  Object.assign(LW, { Store, Vault, DrawGate, replaceSession });
 })(typeof window !== 'undefined' ? window : globalThis);

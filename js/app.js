@@ -143,11 +143,32 @@
   let checking = false;
   let saveTimer = 0;
   let storageError = false;
+  let staleState = false;
+  let persistedSnapshot = JSON.stringify(LW.Store.load());
+
+  function freshStore() { return JSON.stringify(LW.Store.load()) === persistedSnapshot; }
+
+  function saveSessionState(next) {
+    if (staleState || !freshStore()) {
+      staleState = true;
+      return false;
+    }
+    const saved = LW.Store.save(next);
+    if (saved) persistedSnapshot = JSON.stringify(next);
+    return saved;
+  }
 
   function persist(now = false) {
     clearTimeout(saveTimer);
     const write = () => {
+      if (staleState || !freshStore()) {
+        if (!staleState) toast('另一個分頁已更新此場次。請重新整理，以免覆蓋較新的抽獎紀錄。', { tone: 'error', timeout: 0 });
+        staleState = true;
+        renderControls();
+        return false;
+      }
       const saved = LW.Store.save(state);
+      if (saved) persistedSnapshot = JSON.stringify(state);
       if (!saved && !storageError) {
         toast('無法寫入瀏覽器儲存空間。抽獎已暫停，請先匯出中獎名單，並檢查儲存權限或可用空間。', { tone: 'error', timeout: 0 });
       }
@@ -207,6 +228,7 @@
   }
 
   function drawBlocker() {
+    if (staleState || !freshStore()) return '另一個分頁已更新此場次，請重新整理後再抽獎';
     if (storageError) return '無法保存抽獎紀錄，請檢查瀏覽器的儲存權限或可用空間';
     if (!state.prizes.length) return '先到「獎池」新增獎項';
     if (allDrawn()) return '所有獎項都已抽出';
@@ -657,9 +679,23 @@
   async function startDraw() {
     if (busy()) return;
     LW.Sound.unlock(); // must happen inside the click / key gesture
+    phase = 'drawing';
+    renderAll();
+    try {
+      await LW.DrawGate.run(state.session.id, performDraw);
+    } catch (err) {
+      phase = 'idle';
+      renderAll();
+      syncStage();
+      toast(err.message || String(err), { tone: 'error', timeout: 0 });
+    }
+  }
+
+  async function performDraw(assertLock) {
     leaveResult();
     const blocker = drawBlocker();
     if (blocker) {
+      phase = 'idle';
       syncStage();
       renderControls();
       toast(blocker, { tone: 'error' });
@@ -671,7 +707,6 @@
     const names = pool.map((p) => p.name);
     const seq = state.records.length + 1;
 
-    phase = 'drawing';
     stage.clearResult();
     stage.setLabels(names);
     renderAll();
@@ -720,6 +755,7 @@
         video: recorder ? { state: 'recording' } : { state: 'none' },
         rule: { eligibleGroup: prize.eligibleGroup || '', repeatPolicy: prize.repeatPolicy || 'inherit', allowRepeat: prize.repeatPolicy === 'allow' || (prize.repeatPolicy !== 'exclude' && state.settings.allowRepeat) },
       };
+      await assertLock();
       state.records.push(record);
       if (!persist(true)) {
         state.records.pop();
@@ -737,7 +773,8 @@
       if (recorder) recorder.cancel();
       stage.setRecording(null);
       const why = (err && err.message) || String(err);
-      if (record) {
+      if (err?.lockLost) staleState = true;
+      if (record && !err?.lockLost) {
         record.status = 'aborted';
         record.abortReason = why;
         record.video = recorder ? { state: 'failed', error: '抽獎中斷，錄影未完成' } : { state: 'none' };
@@ -752,6 +789,17 @@
 
     record.status = 'valid';
     record.drawnAt = new Date().toISOString();
+    try { await assertLock(); } catch (err) {
+      if (recorder) recorder.cancel();
+      stage.setRecording(null);
+      record.status = 'pending';
+      staleState = true;
+      phase = 'idle';
+      renderAll();
+      syncStage();
+      toast(err.message || String(err), { tone: 'error', timeout: 0 });
+      return;
+    }
     if (!persist(true)) {
       if (recorder) recorder.cancel();
       stage.setRecording(null);
@@ -807,7 +855,7 @@
     add(!state.settings.record || LW.Recorder.supported(), '此瀏覽器可執行目前的錄影設定');
     await LW.Vault.ready();
     add(LW.Vault.durable, '錄影與候選快照可長期保存於此瀏覽器');
-    const canSave = LW.Store.save(state);
+    const canSave = persist(true);
     storageError = !canSave;
     renderControls();
     renderSettings();
@@ -1152,7 +1200,11 @@
         video: r.video?.state === 'ready' ? backup.files.get(`${backup.prefix}錄影/${r.video.file}`) || null : null,
       }));
       const restored = sanitizeState(backup.state);
-      await LW.replaceSession(state, restored, incoming);
+      await LW.DrawGate.run(state.session.id, async (assertLock) => {
+        await assertLock();
+        if (!freshStore()) throw new Error('另一個分頁已更新此場次，請重新整理後再還原');
+        await LW.replaceSession(state, restored, incoming, { store: { save: saveSessionState } });
+      });
       Object.assign(state, restored);
       peopleCache = { text: null, list: [] };
       fpKey = null;
@@ -1344,7 +1396,11 @@
     try {
       clearTimeout(saveTimer);
       const next = { ...state, records: [], session: newSession(), currentPrizeId: state.prizes[0]?.id || null };
-      await LW.replaceSession(state, next, []);
+      await LW.DrawGate.run(state.session.id, async (assertLock) => {
+        await assertLock();
+        if (!freshStore()) throw new Error('另一個分頁已更新此場次，請重新整理後再重設');
+        await LW.replaceSession(state, next, [], { store: { save: saveSessionState } });
+      });
       Object.assign(state, next);
       storageError = false;
       leaveResult();
@@ -1365,7 +1421,11 @@
     try {
       clearTimeout(saveTimer);
       const next = { ...state, title: '', prizes: [], people: '', records: [], currentPrizeId: null, session: newSession(), sample: false };
-      await LW.replaceSession(state, next, []);
+      await LW.DrawGate.run(state.session.id, async (assertLock) => {
+        await assertLock();
+        if (!freshStore()) throw new Error('另一個分頁已更新此場次，請重新整理後再清除範例');
+        await LW.replaceSession(state, next, [], { store: { save: saveSessionState } });
+      });
       Object.assign(state, next);
       storageError = false;
       leaveResult();
@@ -1728,6 +1788,12 @@
   /* =================================================================== lifecycle */
 
   window.addEventListener('pagehide', () => persist(true));
+  window.addEventListener('storage', (event) => {
+    if (event.key !== LW.Store.stateKey || event.newValue === persistedSnapshot) return;
+    if (!staleState) toast('另一個分頁已更新此場次。請重新整理後繼續操作。', { tone: 'error', timeout: 0 });
+    staleState = true;
+    renderControls();
+  });
   window.addEventListener('beforeunload', (e) => {
     persist(true);
     if (busy()) {

@@ -21,6 +21,79 @@ test('state store reports a failed browser write', () => {
   assert.equal(LW.Store.save({ records: [] }), true);
 });
 
+test('draw gate rejects a second draw while Web Locks holds the session', async () => {
+  let occupied = false;
+  const gateContext = vm.createContext({
+    navigator: { locks: { async request(_id, options, callback) {
+      assert.equal(options.ifAvailable, true);
+      if (occupied) return callback(null);
+      occupied = true;
+      try { return await callback({}); } finally { occupied = false; }
+    } } },
+  });
+  gateContext.globalThis = gateContext;
+  vm.runInContext(readFileSync(new URL('../js/store.js', import.meta.url), 'utf8'), gateContext);
+  let release;
+  const first = gateContext.LW.DrawGate.run('SESSION', async (assertHeld) => {
+    await assertHeld();
+    await new Promise((resolve) => { release = resolve; });
+  });
+  while (!release) await new Promise((resolve) => setImmediate(resolve));
+  await assert.rejects(gateContext.LW.DrawGate.run('SESSION', async () => {}), /另一個分頁操作/);
+  release();
+  await first;
+  await gateContext.LW.DrawGate.run('SESSION', async () => {});
+});
+
+test('IndexedDB draw lease prevents a concurrent draw and releases afterward', async () => {
+  const stores = new Map();
+  const db = {
+    objectStoreNames: { contains(name) { return stores.has(name); } },
+    createObjectStore(name) { stores.set(name, new Map()); },
+    transaction(name) {
+      const data = stores.get(name);
+      const tx = { oncomplete: null, onerror: null, onabort: null };
+      tx.objectStore = () => ({
+        get(id) {
+          const request = { result: undefined, onsuccess: null };
+          queueMicrotask(() => {
+            request.result = data.get(id);
+            request.onsuccess();
+            queueMicrotask(() => tx.oncomplete());
+          });
+          return request;
+        },
+        put(value) { data.set(value.id, value); },
+        delete(id) { data.delete(id); },
+      });
+      return tx;
+    },
+  };
+  const gateContext = vm.createContext({
+    crypto: webcrypto, Uint8Array, setInterval, clearInterval,
+    indexedDB: { open(_name, version) {
+      assert.equal(version, 2);
+      const request = { result: db };
+      queueMicrotask(() => { request.onupgradeneeded(); request.onsuccess(); });
+      return request;
+    } },
+  });
+  gateContext.globalThis = gateContext;
+  for (const file of ['js/util.js', 'js/store.js']) {
+    vm.runInContext(readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'), gateContext);
+  }
+  let release;
+  const first = gateContext.LW.DrawGate.run('SESSION', async (assertHeld) => {
+    await assertHeld();
+    await new Promise((resolve) => { release = resolve; });
+  });
+  while (!release) await new Promise((resolve) => setImmediate(resolve));
+  await assert.rejects(gateContext.LW.DrawGate.run('SESSION', async () => {}), /另一個分頁操作/);
+  release();
+  await first;
+  await gateContext.LW.DrawGate.run('SESSION', async (assertHeld) => { await assertHeld(); });
+});
+
 test('SHA-256 matches Node across padding boundaries and large Blob chunks', async () => {
   for (const size of [0, 1, 55, 56, 63, 64, 65, 4097, 33 * 1024 * 1024 + 17]) {
     const bytes = randomBytes(size);
