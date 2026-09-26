@@ -15,6 +15,9 @@
       setup ||= root.navigator.serviceWorker.register('./sw.js', { scope: './', updateViaCache: 'none' })
         .then(() => root.navigator.serviceWorker.ready);
       const registration = await setup;
+      if (registration.waiting) {
+        return { ready: false, message: '新版程式已下載，請關閉所有抽獎與投影分頁後重新開啟，再執行活動前檢查' };
+      }
       const active = registration.active;
       if (!active) throw new Error('沒有啟用的離線程式');
       const channel = new root.MessageChannel();

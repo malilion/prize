@@ -23,6 +23,41 @@ test('state store reports a failed browser write', () => {
   assert.equal(LW.Store.setPref('lastExportReceipt', {}), true);
 });
 
+test('offline preflight waits for a pending app update instead of approving the old cache', async () => {
+  const source = readFileSync(new URL('../js/offline.js', import.meta.url), 'utf8');
+  const inspect = async (waiting) => {
+    let checkedOldCache = false;
+    const registration = {
+      waiting: waiting ? {} : null,
+      active: { postMessage(_message, [port]) {
+        checkedOldCache = true;
+        port.postMessage({ ready: true });
+      } },
+    };
+    class MessageChannelStub {
+      constructor() {
+        this.port1 = { onmessage: null, close() {} };
+        this.port2 = { postMessage: (data) => queueMicrotask(() => this.port1.onmessage?.({ data })) };
+      }
+    }
+    const app = vm.createContext({
+      location: { protocol: 'https:' }, isSecureContext: true,
+      navigator: { serviceWorker: { register: async () => registration, ready: Promise.resolve(registration) } },
+      MessageChannel: MessageChannelStub, setTimeout, clearTimeout,
+    });
+    app.globalThis = app;
+    vm.runInContext(source, app);
+    return { result: await app.LW.offlineReadiness(), checkedOldCache };
+  };
+  const pending = await inspect(true);
+  assert.equal(pending.result.ready, false);
+  assert.match(pending.result.message, /關閉所有抽獎與投影分頁/);
+  assert.equal(pending.checkedOldCache, false);
+  const current = await inspect(false);
+  assert.equal(current.result.ready, true);
+  assert.equal(current.checkedOldCache, true);
+});
+
 test('export receipt binds a ZIP hash to its file and session', () => {
   const receipt = { sessionId: 'ABCD-EFGH', fileName: '抽獎憑證包.zip', sha256: 'a'.repeat(64), exportedAt: '2026-09-27T01:02:03.000Z' };
   assert.equal(LW.normalizeExportReceipt(receipt, receipt.sessionId).sha256, receipt.sha256);
