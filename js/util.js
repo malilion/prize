@@ -87,8 +87,8 @@
     return `${prefix}_${Array.from(bytes, (b) => pad(b.toString(16))).join('')}`;
   }
 
-  /* ---------- SHA-256: Web Crypto first, pure-JS fallback for browsers that hide
-     crypto.subtle on file:// pages ---------- */
+  /* ---------- SHA-256: Web Crypto for small inputs, incremental pure JS for large
+     recordings and browsers that hide crypto.subtle on file:// pages ---------- */
 
   const toHex = (bytes) => Array.from(bytes, (b) => pad(b.toString(16))).join('');
 
@@ -100,6 +100,15 @@
   }
 
   async function sha256Hex(data) {
+    // Web Crypto only accepts a complete buffer. Keep large recordings bounded in memory.
+    if (typeof Blob !== 'undefined' && data instanceof Blob && data.size > 32 * 1024 * 1024) {
+      const hash = new Sha256();
+      const chunkSize = 4 * 1024 * 1024;
+      for (let offset = 0; offset < data.size; offset += chunkSize) {
+        hash.update(new Uint8Array(await data.slice(offset, offset + chunkSize).arrayBuffer()));
+      }
+      return hash.digest();
+    }
     const bytes = await toBytes(data);
     const subtle = root.crypto && root.crypto.subtle;
     if (subtle) {
@@ -120,21 +129,20 @@
   ]);
   const ror = (x, n) => (x >>> n) | (x << (32 - n));
 
-  function sha256Sync(bytes) {
-    const len = bytes.length;
-    const total = Math.ceil((len + 9) / 64) * 64;
-    const buf = new Uint8Array(total);
-    buf.set(bytes);
-    buf[len] = 0x80;
-    const view = new DataView(buf.buffer);
-    view.setUint32(total - 8, Math.floor(len / 0x20000000));
-    view.setUint32(total - 4, (len * 8) >>> 0);
+  class Sha256 {
+    constructor() {
+      this.length = 0;
+      this.block = new Uint8Array(64);
+      this.used = 0;
+      this.hs = new Uint32Array([
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+      ]);
+      this.w = new Uint32Array(64);
+    }
 
-    const hs = new Uint32Array([
-      0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
-    ]);
-    const w = new Uint32Array(64);
-    for (let off = 0; off < total; off += 64) {
+    compress(view, off) {
+      const hs = this.hs;
+      const w = this.w;
       for (let i = 0; i < 16; i++) w[i] = view.getUint32(off + i * 4);
       for (let i = 16; i < 64; i++) {
         const a = w[i - 15], b = w[i - 2];
@@ -152,7 +160,51 @@
       hs[0] += a; hs[1] += b; hs[2] += c; hs[3] += d;
       hs[4] += e; hs[5] += f; hs[6] += g; hs[7] += h;
     }
-    return Array.from(hs, (x) => x.toString(16).padStart(8, '0')).join('');
+
+    update(bytes) {
+      this.length += bytes.length;
+      let off = 0;
+      if (this.used) {
+        const n = Math.min(64 - this.used, bytes.length);
+        this.block.set(bytes.subarray(0, n), this.used);
+        this.used += n;
+        off = n;
+        if (this.used === 64) {
+          this.compress(new DataView(this.block.buffer), 0);
+          this.used = 0;
+        }
+      }
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      while (off + 64 <= bytes.length) {
+        this.compress(view, off);
+        off += 64;
+      }
+      if (off < bytes.length) {
+        this.block.set(bytes.subarray(off), 0);
+        this.used = bytes.length - off;
+      }
+    }
+
+    digest() {
+      this.block[this.used++] = 0x80;
+      if (this.used > 56) {
+        this.block.fill(0, this.used);
+        this.compress(new DataView(this.block.buffer), 0);
+        this.used = 0;
+      }
+      this.block.fill(0, this.used, 56);
+      const view = new DataView(this.block.buffer);
+      view.setUint32(56, Math.floor(this.length / 0x20000000));
+      view.setUint32(60, (this.length * 8) >>> 0);
+      this.compress(view, 0);
+      return Array.from(this.hs, (x) => x.toString(16).padStart(8, '0')).join('');
+    }
+  }
+
+  function sha256Sync(bytes) {
+    const hash = new Sha256();
+    hash.update(bytes);
+    return hash.digest();
   }
 
   /* ---------- CSV ---------- */

@@ -102,6 +102,7 @@
             <h2 class="pane__title">抽獎名單</h2>
             <p class="pane__meta" id="people-summary"></p>
           </div>
+          <p class="pane__note" id="people-lock-note" hidden>本場已有抽獎紀錄，名單與排除重複中獎的設定已鎖定。重設抽獎後可再編輯，名單會保留。</p>
           <fieldset class="lockable">
             <legend class="sr-only">抽獎名單</legend>
             <label class="field" for="people-text">
@@ -172,6 +173,7 @@
               </label>
               <p class="field__help" id="record-support"></p>
               <p class="field__help" id="storage-info"></p>
+              <button class="btn btn--sm" id="retry-storage" type="button" hidden>重試儲存設定與紀錄</button>
             </div>
             <label class="check">
               <input type="checkbox" id="opt-sound">

@@ -52,6 +52,12 @@
       const blob = data instanceof Blob ? data : new Blob([data]);
       return { name: encoder.encode(entry.name), data, blob };
     });
+    if (files.length > 0xffff) throw new Error('憑證包檔案太多，ZIP 格式最多支援 65535 個檔案');
+    const localBytes = files.reduce((sum, f) => sum + 30 + f.name.length + f.blob.size, 0);
+    const directoryBytes = files.reduce((sum, f) => sum + 46 + f.name.length, 0);
+    if (localBytes > 0xffffffff || directoryBytes > 0xffffffff || localBytes + directoryBytes + 22 > 0xffffffff) {
+      throw new Error('憑證包超過 4 GB，請分批下載錄影');
+    }
     const totalBytes = files.reduce((sum, f) => sum + f.blob.size, 0);
     let done = 0;
     const report = (n) => { done += n; if (onProgress) onProgress(done, totalBytes); };

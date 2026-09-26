@@ -132,14 +132,25 @@
   const state = loadState();
   let phase = 'idle'; // idle → drawing → saving → result → idle
   let zipping = false;
+  let clearing = false;
   let saveTimer = 0;
+  let storageError = false;
 
   function persist(now = false) {
     clearTimeout(saveTimer);
     const write = () => {
-      if (!LW.Store.save(state)) toast('無法寫入瀏覽器儲存空間，重新整理後設定可能會遺失。請先匯出中獎名單。', { tone: 'error', timeout: 0 });
+      const saved = LW.Store.save(state);
+      if (!saved && !storageError) {
+        toast('無法寫入瀏覽器儲存空間。抽獎已暫停，請先匯出中獎名單，並檢查儲存權限或可用空間。', { tone: 'error', timeout: 0 });
+      }
+      if (storageError !== !saved) {
+        storageError = !saved;
+        renderControls();
+        renderSettings();
+      }
+      return saved;
     };
-    if (now) write();
+    if (now) return write();
     else saveTimer = setTimeout(write, 250);
   }
 
@@ -187,7 +198,8 @@
   const allDrawn = () => state.prizes.length > 0 && state.prizes.every((p) => remaining(p) === 0);
   /** Valid winners of a prize, newest first. */
   const winnersOf = (id) => state.records.filter((r) => r.prizeId === id && r.status === 'valid').map((r) => r.name).reverse();
-  const busy = () => phase === 'drawing' || phase === 'saving';
+  const busy = () => phase === 'drawing' || phase === 'saving' || zipping || clearing;
+  const rosterLocked = () => state.records.length > 0;
   const readyVideos = () => state.records.filter((r) => r.video && r.video.state === 'ready');
 
   /** Keep "本輪獎項" pointing at something drawable, in list order. */
@@ -199,6 +211,7 @@
   }
 
   function drawBlocker() {
+    if (storageError) return '無法保存抽獎紀錄，請檢查瀏覽器的儲存權限或可用空間';
     if (!state.prizes.length) return '先到「獎池」新增獎項';
     if (allDrawn()) return '所有獎項都已抽出';
     const prize = currentPrize();
@@ -245,6 +258,7 @@
     optSound: $('#opt-sound'),
     recordSupport: $('#record-support'),
     storageInfo: $('#storage-info'),
+    retryStorage: $('#retry-storage'),
     toasts: $('#toasts'),
     announcer: $('#announcer'),
     filePeople: $('#file-people'),
@@ -326,8 +340,9 @@
     renderSettings();
     el.sessionId.textContent = state.session.id;
     el.sampleNotice.hidden = !state.sample;
-    $$('.lockable').forEach((fs) => { fs.disabled = busy(); });
+    $$('.lockable').forEach((fs) => { fs.disabled = busy() || (!!fs.closest('#pane-people') && rosterLocked()); });
     $('#sample-clear').disabled = busy();
+    $('#reset-open').disabled = busy();
   }
 
   function renderControls() {
@@ -335,10 +350,10 @@
     const blocker = isBusy ? null : drawBlocker();
     el.spin.disabled = isBusy || !!blocker;
     el.spin.setAttribute('aria-busy', String(isBusy));
-    el.spinLabel.textContent = phase === 'drawing' ? '抽獎中' : phase === 'saving' ? '儲存錄影' : '開始抽獎';
+    el.spinLabel.textContent = phase === 'drawing' ? '抽獎中' : phase === 'saving' ? '儲存錄影' : zipping ? '憑證包打包中' : clearing ? '正在清除場次' : '開始抽獎';
     el.spinHint.textContent = blocker ||
       (phase === 'drawing' && state.settings.record ? '錄影中，請不要切換分頁或關閉視窗' :
-        phase === 'saving' ? '正在儲存這一抽的錄影…' : '按空白鍵也能開始');
+        phase === 'saving' ? '正在儲存這一抽的錄影…' : zipping ? '請等憑證包打包完成' : clearing ? '請等場次清除完成' : '按空白鍵也能開始');
     el.spinHint.classList.toggle('is-warning', !!blocker);
 
     el.prizeSelect.innerHTML = state.prizes.length
@@ -426,9 +441,11 @@
     }
     el.peopleHelp.classList.toggle('is-warning', dups.length > 0);
     el.dedupe.hidden = !dups.length;
+    $('#people-lock-note').hidden = !rosterLocked();
   }
 
   function setPeople(text) {
+    if (busy() || rosterLocked()) return;
     state.people = text;
     el.peopleText.value = text;
     state.sample = false;
@@ -529,6 +546,7 @@
       ? `錄影格式：${format}・1920×1080・30 fps。錄下的就是轉盤畫面（含音效），從開始前 1 秒錄到結果後 3 秒。`
       : '這個瀏覽器不支援錄影，請改用最新版 Chrome、Edge 或 Safari。';
     el.recordSupport.classList.toggle('is-warning', !format);
+    el.retryStorage.hidden = !storageError;
     renderStorageInfo();
   }
 
@@ -542,7 +560,7 @@
       return;
     }
     if (!LW.Vault.durable) {
-      el.storageInfo.textContent = '這個瀏覽器無法長期保存錄影，重新整理頁面後就會消失。請保持「錄完自動下載」開啟。';
+      el.storageInfo.textContent = '這個瀏覽器無法長期保存候選名單快照與錄影，重新整理後就會消失。請保持自動下載錄影開啟，並在每抽後匯出憑證包。';
       el.storageInfo.classList.add('is-warning');
       return;
     }
@@ -674,8 +692,13 @@
         video: recorder ? { state: 'recording' } : { state: 'none' },
       };
       state.records.push(record);
-      persist(true);
-      snapshotSaved = LW.Vault.put({ id: record.id, candidates: names, video: null }).catch(() => {});
+      if (!persist(true)) {
+        state.records.pop();
+        record = null;
+        throw Object.assign(new Error('無法保存這一抽的預定結果，抽獎沒有開始。請檢查瀏覽器的儲存權限或可用空間。'), { beforeDraw: true });
+      }
+      snapshotSaved = LW.Vault.put({ id: record.id, candidates: names, video: null });
+      await snapshotSaved;
 
       await LW.wait(PREROLL_MS);
       stage.setView({ readout: { label: '轉動中', text: null, tone: 'normal' } });
@@ -867,6 +890,7 @@
   async function exportPackage() {
     if (zipping || busy() || !state.records.length) return;
     zipping = true;
+    renderAll();
     const label = el.exportZip.querySelector('.btn__label');
     el.exportZip.disabled = true;
     el.exportZip.setAttribute('aria-busy', 'true');
@@ -883,9 +907,10 @@
         draws.push(auditDraw(r, snap));
         if (r.video && r.video.state === 'ready') {
           const file = cleanVideoFile(r.video.file); // never let a stored name leave the ZIP folder
-          sums.push(`${r.video.sha256}  錄影/${file}`);
-          if (snap && snap.video) videos.push({ name: `${folder}/錄影/${file}`, data: snap.video, record: r });
-          else missing.push(r);
+          if (snap && snap.video) {
+            sums.push(`${r.video.sha256}  錄影/${file}`);
+            videos.push({ name: `${folder}/錄影/${file}`, data: snap.video, record: r });
+          } else missing.push(r);
         }
       }
       const entries = [
@@ -913,7 +938,7 @@
       zipping = false;
       el.exportZip.removeAttribute('aria-busy');
       label.textContent = '匯出憑證包';
-      renderRecords();
+      renderAll();
       renderStorageInfo();
     }
   }
@@ -1072,34 +1097,46 @@
 
   async function resetDraws() {
     if (busy()) return;
-    state.records = [];
-    state.session = newSession();
-    state.currentPrizeId = null;
-    ensureCurrentPrize();
-    await LW.Vault.clear();
-    persist(true);
-    leaveResult();
+    clearing = true;
     renderAll();
-    syncStage();
-    toast(`已重設。新的場次代碼是 ${state.session.id}。`);
+    try {
+      state.records = [];
+      state.session = newSession();
+      state.currentPrizeId = null;
+      ensureCurrentPrize();
+      persist(true);
+      await LW.Vault.clear();
+      leaveResult();
+      toast(`已重設。新的場次代碼是 ${state.session.id}。`);
+    } finally {
+      clearing = false;
+      renderAll();
+      syncStage();
+    }
   }
 
   async function clearSample() {
     if (busy()) return;
-    state.title = '';
-    state.prizes = [];
-    state.people = '';
-    state.records = [];
-    state.currentPrizeId = null;
-    state.session = newSession();
-    state.sample = false;
-    await LW.Vault.clear();
-    persist(true);
-    leaveResult();
+    clearing = true;
     renderAll();
-    syncStage();
-    selectTab('prizes');
-    $('#prize-add').focus();
+    try {
+      state.title = '';
+      state.prizes = [];
+      state.people = '';
+      state.records = [];
+      state.currentPrizeId = null;
+      state.session = newSession();
+      state.sample = false;
+      persist(true);
+      await LW.Vault.clear();
+      leaveResult();
+    } finally {
+      clearing = false;
+      renderAll();
+      syncStage();
+      selectTab('prizes');
+      $('#prize-add').focus();
+    }
   }
 
   /* =================================================================== tabs */
@@ -1297,6 +1334,10 @@
 
   // people
   el.peopleText.addEventListener('input', () => {
+    if (busy() || rosterLocked()) {
+      el.peopleText.value = state.people;
+      return;
+    }
     state.people = el.peopleText.value;
     state.sample = false;
     el.sampleNotice.hidden = true;
@@ -1315,6 +1356,7 @@
     el.filePeople.value = '';
     if (!file) return;
     const text = LW.decodeText(await file.arrayBuffer());
+    if (busy() || rosterLocked()) return;
     const isTable = /\.(csv|tsv)$/i.test(file.name) || /csv/.test(file.type);
     let rows = isTable ? LW.parseCSV(text).map((cells) => cells.map((c) => c.trim()).filter(Boolean)) : text.split(/\r?\n/).map((l) => [l.trim()]);
     rows = rows.filter((cells) => cells.length && cells.join(''));
@@ -1394,6 +1436,11 @@
     persist();
   });
   el.optSound.addEventListener('change', () => setSound(el.optSound.checked));
+  el.retryStorage.addEventListener('click', () => {
+    if (busy()) return;
+    if (persist(true)) toast('設定與抽獎紀錄已重新儲存，可以繼續抽獎。');
+    else toast('仍無法儲存，請檢查瀏覽器的儲存權限或可用空間。', { tone: 'error' });
+  });
   $('#reset-open').addEventListener('click', openReset);
 
   /* =================================================================== lifecycle */
