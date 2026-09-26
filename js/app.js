@@ -1074,6 +1074,8 @@
         `依目前獎項順序，「${group}」組的人可能先被不限組別或允許重複中獎的獎抽走；請先抽該組的限組獎`);
     }
     add(!state.settings.record || LW.Recorder.supported(), '此瀏覽器可執行目前的錄影設定');
+    const offline = await LW.offlineReadiness();
+    add(offline.ready, offline.message);
     await LW.Vault.ready();
     await recoverRecordings();
     add(LW.Vault.durable, '錄影與候選快照可長期保存於此瀏覽器');

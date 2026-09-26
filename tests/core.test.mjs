@@ -946,3 +946,100 @@ test('standalone inspector verifies candidate, winner, video, and restorable sta
   const emptyPrize = await LW.inspectPackage(await archive(draw, true, (audit) => { audit.prizes[0] = null; }));
   assert.ok(emptyPrize.errors.some((error) => error.includes('獎項清單')));
 });
+
+test('hosted app shell is complete and serves every page offline', async () => {
+  const handlers = new Map();
+  const stores = new Map();
+  let claimed = false;
+  let networkCalls = 0;
+  const cache = (name) => {
+    if (!stores.has(name)) stores.set(name, new Map());
+    const entries = stores.get(name);
+    return {
+      async addAll(requests) {
+        for (const request of requests) {
+          const path = new URL(request.url).pathname.replace(/^\/prize\//, '') || 'index.html';
+          readFileSync(new URL(`../${path}`, import.meta.url));
+          entries.set(request.url, { path });
+        }
+      },
+      async match(request) { return entries.get(typeof request === 'string' ? request : request.url); },
+    };
+  };
+  const worker = {
+    registration: { scope: 'https://example.test/prize/' },
+    clients: { async claim() { claimed = true; } },
+    addEventListener(type, handler) { handlers.set(type, handler); },
+  };
+  const swContext = vm.createContext({
+    self: worker, URL, Request,
+    caches: {
+      open: async (name) => cache(name),
+      keys: async () => [...stores.keys()],
+      delete: async (name) => stores.delete(name),
+    },
+    fetch: async () => { networkCalls++; throw new Error('offline'); },
+  });
+  vm.runInContext(readFileSync(new URL('../sw.js', import.meta.url), 'utf8'), swContext);
+  let pending;
+  handlers.get('install')({ waitUntil(promise) { pending = promise; } });
+  await pending;
+  const version = [...stores.keys()][0];
+  assert.match(version, /^prize-shell-/);
+  assert.equal(stores.get(version).size, 20);
+  let response;
+  handlers.get('fetch')({ request: new Request('https://example.test/prize/verify.html'), respondWith(promise) { response = promise; } });
+  assert.equal((await response).path, 'verify.html');
+  assert.equal(networkCalls, 0);
+  response = null;
+  handlers.get('fetch')({ request: new Request('https://example.test/other'), respondWith(promise) { response = promise; } });
+  assert.equal(response, null);
+  let status;
+  handlers.get('message')({ data: { type: 'prize-shell-status' }, ports: [{ postMessage(value) { status = value; } }], waitUntil(promise) { pending = promise; } });
+  await pending;
+  assert.equal(status.ready, true);
+  stores.get(version).delete('https://example.test/prize/verify.html');
+  handlers.get('message')({ data: { type: 'prize-shell-status' }, ports: [{ postMessage(value) { status = value; } }], waitUntil(promise) { pending = promise; } });
+  await pending;
+  assert.equal(status.ready, false);
+  stores.set('prize-shell-old', new Map());
+  stores.set('other-app', new Map());
+  handlers.get('activate')({ waitUntil(promise) { pending = promise; } });
+  await pending;
+  assert.equal(stores.has('prize-shell-old'), false);
+  assert.equal(stores.has('other-app'), true);
+  assert.equal(claimed, true);
+});
+
+test('offline readiness checks the active cache and accepts local files', async () => {
+  const source = readFileSync(new URL('../js/offline.js', import.meta.url), 'utf8');
+  const local = vm.createContext({ location: { protocol: 'file:' }, setTimeout() {}, clearTimeout() {} });
+  local.globalThis = local;
+  vm.runInContext(source, local);
+  assert.equal((await local.LW.offlineReadiness()).ready, true);
+
+  let registered = false;
+  const hosted = vm.createContext({
+    location: { protocol: 'https:' }, isSecureContext: true,
+    setTimeout() {}, clearTimeout() {},
+    MessageChannel: class {
+      constructor() {
+        this.port1 = { onmessage: null, close() {} };
+        this.port2 = { peer: this.port1 };
+      }
+    },
+    navigator: { serviceWorker: {
+      register: async () => { registered = true; },
+      ready: Promise.resolve({ active: {
+        postMessage(message, ports) {
+          assert.equal(message.type, 'prize-shell-status');
+          queueMicrotask(() => ports[0].peer.onmessage({ data: { ready: true } }));
+        },
+      } }),
+    } },
+  });
+  hosted.globalThis = hosted;
+  vm.runInContext(source, hosted);
+  assert.equal((await hosted.LW.offlineReadiness()).ready, true);
+  assert.equal(registered, true);
+});

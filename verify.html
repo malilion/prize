@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; worker-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
   <title>憑證包驗證 · 抽獎轉盤</title>
   <link rel="stylesheet" href="tokens.css">
@@ -31,6 +31,7 @@
     <p class="note">驗證通過表示 ZIP 內的候選名單、結果、錄影與雜湊值彼此一致；若出現錯誤或注意事項，請依畫面所列限制判讀。驗證無法單獨證明抽獎當時的程式、亂數或檔案從未被整包重建；公開且留存抽獎當下的雜湊值有助於比對。</p>
   </main>
   <script src="js/util.js"></script>
+  <script src="js/offline.js"></script>
   <script src="js/zip.js"></script>
   <script src="js/evidence.js"></script>
   <script src="js/eligibility.js"></script>
