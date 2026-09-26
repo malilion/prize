@@ -321,7 +321,12 @@ test('roster import uses named columns without appending unrelated personal data
   ], true).join('\n'), '甲\n乙');
   assert.equal(LW.rosterLinesFromRows([
     ['姓名', '部門', '員工編號'], ['甲', '業務', 'A01'], ['乙', '工程', 'B02'],
-  ], true).join('\n'), '甲 | 業務\n乙 | 工程');
+  ], true).join('\n'), 'A01 甲 | 業務\nB02 乙 | 工程');
+  const sameName = LW.rosterLinesFromRows([
+    ['ID', '姓名', 'Email'], ['A01', '甲', 'a@example.com'], ['A02', '甲', 'b@example.com'],
+  ], true);
+  assert.deepEqual(Array.from(LW.parsePeople(sameName.join('\n')), (person) => person.key), ['A01 甲', 'A02 甲']);
+  assert.equal(LW.rosterLinesFromRows(LW.parseCSV('\uFEFF員工編號,姓名,部門,Email\n"0007","王,小明",業務,a@example.com'), true).join('\n'), '0007 王,小明 | 業務');
   assert.equal(LW.rosterLinesFromRows([['A01', '甲'], ['A02', '乙']], true).join('\n'), 'A01 甲\nA02 乙');
 });
 
