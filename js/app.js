@@ -353,6 +353,7 @@
     dlgVoid: $('#dlg-void'),
     dlgReset: $('#dlg-reset'),
     dlgVideo: $('#dlg-video'),
+    dlgEvidence: $('#dlg-evidence'),
     dlgVerify: $('#dlg-verify'),
   };
 
@@ -636,6 +637,7 @@
       actions.push(`<button class="btn btn--sm" type="button" data-act="play" data-id="${esc(r.id)}">${icon('play')}播放</button>`);
       actions.push(`<button class="btn btn--sm" type="button" data-act="save" data-id="${esc(r.id)}">${icon('download')}下載錄影</button>`);
     }
+    actions.push(`<button class="btn btn--sm btn--ghost" type="button" data-act="evidence" data-id="${esc(r.id)}"${busy() ? ' disabled' : ''}>查核快照</button>`);
     if (r.status === 'valid') {
       actions.push(`<button class="btn btn--sm btn--ghost" type="button" data-act="void" data-id="${esc(r.id)}"${busy() || staleState || storageProblem ? ' disabled' : ''}>作廢</button>`);
     }
@@ -1485,6 +1487,63 @@
     dl.innerHTML = rows.map(([k, v, mono]) => `<dt>${esc(k)}</dt><dd${mono ? ' class="mono"' : ''}>${esc(v)}</dd>`).join('');
   }
 
+  let evidenceRequest = 0;
+  let activeDrawEvidence = null;
+  async function showDrawEvidence(id) {
+    const record = state.records.find((item) => item.id === id);
+    if (!record || record.status === 'pending' || busy()) return;
+    const sessionId = state.session.id;
+    const request = ++evidenceRequest;
+    const dlg = el.dlgEvidence;
+    const status = $('#evidence-status');
+    const preview = $('#evidence-preview');
+    activeDrawEvidence = null;
+    dlg.classList.remove('is-ok', 'is-bad');
+    $('#dlg-evidence-title').textContent = `第 ${record.seq} 抽・候選快照查核`;
+    status.textContent = '正在讀取並重新計算候選名單指紋…';
+    $('#evidence-meta').replaceChildren();
+    preview.replaceChildren();
+    $('#evidence-download').disabled = true;
+    openDialog(dlg);
+    try {
+      const snapshot = await LW.Vault.get(record.id);
+      const result = await LW.inspectDrawEvidence(record, snapshot, { allowDuplicateKeys: state.rosterKeyScheme === 1 });
+      if (request !== evidenceRequest || !dlg.open || state.session.id !== sessionId) return;
+      dlg.classList.toggle('is-ok', !result.errors.length);
+      dlg.classList.toggle('is-bad', !!result.errors.length);
+      status.textContent = result.errors.length
+        ? `查核未通過：${result.errors.join('；')}`
+        : `候選快照與本機抽獎紀錄一致${result.warnings.length ? `；注意：${result.warnings.join('；')}` : ''}。`;
+      fillMeta($('#evidence-meta'), [
+        ['獎項', record.prizeName],
+        ['中獎者', record.name],
+        ['候選人數與中獎位置', `${record.candidateCount} 人・第 ${record.index + 1} 位`],
+        ['當時資格規則', record.rule
+          ? `${record.rule.eligibleGroup || '不限組別'}・${record.rule.allowRepeat ? '允許曾中獎者再參加' : '排除曾中獎者'}`
+          : '未記錄（舊版場次）'],
+        ['紀錄 SHA-256', record.candidatesHash || '未提供', true],
+        ['快照 SHA-256', result.actualHash || '無法計算', true],
+      ]);
+      if (Array.isArray(result.candidates)) {
+        preview.replaceChildren(...result.candidates.slice(0, 20).map((name, index) => {
+          const item = document.createElement('li');
+          const key = Array.isArray(result.candidateKeys) && typeof result.candidateKeys[index] === 'string' ? result.candidateKeys[index] : '';
+          item.textContent = `${String(name)}${key ? `（${key}）` : ''}${index === record.index ? '・中獎位置' : ''}`;
+          if (index === record.index) item.classList.add('is-winner');
+          return item;
+        }));
+      }
+      if (!result.errors.length) {
+        activeDrawEvidence = { record, result, sessionId };
+        $('#evidence-download').disabled = false;
+      }
+    } catch (err) {
+      if (request !== evidenceRequest || !dlg.open) return;
+      dlg.classList.add('is-bad');
+      status.textContent = `查核無法完成：${err.message || err}`;
+    }
+  }
+
   async function playVideo(id) {
     const r = state.records.find((x) => x.id === id);
     if (!r || !r.video || r.video.state !== 'ready') return;
@@ -2027,7 +2086,23 @@
     const { act, id } = button.dataset;
     if (act === 'play') playVideo(id);
     if (act === 'save') saveVideo(id);
+    if (act === 'evidence') showDrawEvidence(id);
     if (act === 'void') openVoid(id);
+  });
+  el.dlgEvidence.addEventListener('close', () => { evidenceRequest++; activeDrawEvidence = null; });
+  $('#evidence-download').addEventListener('click', () => {
+    if (!activeDrawEvidence || !el.dlgEvidence.open || state.session.id !== activeDrawEvidence.sessionId) return;
+    const { record, result } = activeDrawEvidence;
+    try {
+      const rows = [['位置', '姓名', '識別鍵', '中獎位置']];
+      for (const [index, name] of result.candidates.entries()) {
+        rows.push([index + 1, name, result.candidateKeys[index], index === record.index ? '是' : '']);
+      }
+      LW.download(new Blob([LW.toCSV(rows)], { type: 'text/csv;charset=utf-8' }),
+        `${LW.safeFilename(`第${record.seq}抽_候選名單_${state.session.id}`, 80)}.csv`);
+    } catch (err) {
+      toast(`候選名單無法下載：${err.message || err}`, { tone: 'error' });
+    }
   });
   el.exportCsv.addEventListener('click', exportCSV);
   el.exportZip.addEventListener('click', () => exportPackage());

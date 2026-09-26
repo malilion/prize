@@ -304,6 +304,20 @@
     </div>
   </dialog>
 
+  <dialog class="dialog dialog--wide" id="dlg-evidence" aria-labelledby="dlg-evidence-title">
+    <div class="dialog__body">
+      <h2 class="dialog__title" id="dlg-evidence-title">抽次快照查核</h2>
+      <p class="dialog__lead" id="evidence-status" role="status" aria-live="polite"></p>
+      <dl class="meta" id="evidence-meta"></dl>
+      <p class="dialog__note">下方只預覽前 20 位候選人；完整名單可下載。這裡核對快照與本機紀錄是否一致，完整資格與整包完整性請使用憑證包驗證。</p>
+      <ol class="import-preview" id="evidence-preview" aria-label="候選名單預覽"></ol>
+      <div class="dialog__actions">
+        <button class="btn btn--ghost" type="button" data-close>關閉</button>
+        <button class="btn btn--primary" id="evidence-download" type="button" disabled>下載完整候選名單 CSV</button>
+      </div>
+    </div>
+  </dialog>
+
   <dialog class="dialog" id="dlg-verify" aria-labelledby="dlg-verify-title">
     <div class="dialog__body">
       <h2 class="dialog__title" id="dlg-verify-title"></h2>

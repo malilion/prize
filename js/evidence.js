@@ -43,6 +43,38 @@
     return lines.join('\r\n') + '\r\n';
   }
 
+  async function inspectDrawEvidence(record, snapshot, { allowDuplicateKeys = false } = {}) {
+    const errors = [];
+    const warnings = [];
+    const candidates = snapshot?.candidates;
+    const candidateKeys = snapshot?.candidateKeys;
+    let actualHash = '';
+    if (!snapshot || snapshot.id !== record.id || !Array.isArray(candidates)) {
+      errors.push('找不到這一抽的候選名單快照');
+      return { errors, warnings, actualHash, candidates: null, candidateKeys: null };
+    }
+    if (candidates.some((name) => typeof name !== 'string')) errors.push('候選名單含有無效的姓名資料');
+    else {
+      actualHash = await LW.sha256Hex(candidates.join('\n'));
+      if (!hex(record.candidatesHash) || actualHash !== record.candidatesHash) errors.push('候選名單 SHA-256 與抽獎紀錄不符');
+    }
+    if (record.candidateCount !== candidates.length || !Number.isInteger(record.index) ||
+      record.index < 0 || record.index >= candidates.length || candidates[record.index] !== record.name) {
+      errors.push('候選人數、中獎位置或姓名與抽獎紀錄不符');
+    }
+    if (!Array.isArray(candidateKeys) || candidateKeys.length !== candidates.length ||
+      candidateKeys.some((key) => typeof key !== 'string' || !key)) {
+      errors.push('候選人識別鍵快照缺失或格式不正確');
+    } else {
+      if (candidateKeys[record.index] !== record.key) errors.push('中獎者識別鍵與候選快照不符');
+      if (new Set(candidateKeys).size !== candidateKeys.length) {
+        if (allowDuplicateKeys) warnings.push('舊版名單識別鍵有衝突，無法確認同鍵參加者是否被公平區分');
+        else errors.push('候選人識別鍵重複，無法確認每人都被獨立抽選');
+      }
+    }
+    return { errors, warnings, actualHash, candidates, candidateKeys };
+  }
+
   async function inspectPackage(blob) {
     const files = await LW.readZip(blob);
     const roots = [...files.keys()].map((name) => name.split('/')[0]);
@@ -192,5 +224,5 @@
     return { files, prefix, audit, state, snapshots, errors, warnings };
   }
 
-  Object.assign(LW, { inspectPackage, formatVerificationReport, AUDIT_CSV_HEADER });
+  Object.assign(LW, { inspectPackage, inspectDrawEvidence, formatVerificationReport, AUDIT_CSV_HEADER });
 })(typeof window !== 'undefined' ? window : globalThis);

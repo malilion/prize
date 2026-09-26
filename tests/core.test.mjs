@@ -699,6 +699,24 @@ test('verification report separates archive integrity from a published ZIP hash'
   assert.match(failed, /檢查失敗原因：ZIP 校驗失敗/);
 });
 
+test('single-draw evidence detects missing, altered, and colliding snapshots', async () => {
+  const candidates = ['甲', '乙'];
+  const record = { id: 'draw-1', candidateCount: 2, index: 1, name: '乙', key: '乙',
+    candidatesHash: await LW.sha256Hex(candidates.join('\n')) };
+  const snapshot = { id: record.id, candidates, candidateKeys: ['甲', '乙'] };
+  const valid = await LW.inspectDrawEvidence(record, snapshot);
+  assert.equal(valid.errors.length, 0);
+  assert.equal(valid.actualHash, record.candidatesHash);
+  assert.ok((await LW.inspectDrawEvidence(record, null)).errors.some((error) => error.includes('找不到')));
+  assert.ok((await LW.inspectDrawEvidence(record, { ...snapshot, id: 'other' })).errors.some((error) => error.includes('找不到')));
+  assert.ok((await LW.inspectDrawEvidence(record, { ...snapshot, candidates: ['甲', '丙'] })).errors.some((error) => error.includes('SHA-256')));
+  assert.ok((await LW.inspectDrawEvidence(record, { ...snapshot, candidateKeys: null })).errors.some((error) => error.includes('識別鍵快照')));
+  assert.ok((await LW.inspectDrawEvidence(record, { ...snapshot, candidateKeys: ['甲', '甲'] })).errors.some((error) => error.includes('識別鍵')));
+  const legacy = await LW.inspectDrawEvidence(record, { ...snapshot, candidateKeys: ['乙', '乙'] }, { allowDuplicateKeys: true });
+  assert.equal(legacy.errors.length, 0);
+  assert.ok(legacy.warnings.some((warning) => warning.includes('衝突')));
+});
+
 test('standalone inspector verifies candidate, winner, video, and restorable state', async () => {
   const video = new Blob([Uint8Array.of(3, 1, 4, 1, 5)]);
   const videoHash = await LW.sha256Hex(video);
