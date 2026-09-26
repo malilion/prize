@@ -225,33 +225,39 @@ test('Vault replaces evidence when durable storage is unavailable', async () => 
   assert.equal((await LW.Vault.get('new')).candidates[0], '乙');
 });
 
-test('session replacement preserves the old state and evidence when saving fails', async () => {
-  const records = new Map([['old', { id: 'old', candidates: ['甲'] }]]);
-  const vault = {
-    async get(id) { return records.get(id) || null; },
-    async replace(next) { records.clear(); for (const record of next) records.set(record.id, record); },
-  };
-  const previous = { records: [{ id: 'old' }], session: { id: 'OLD' } };
+test('session replacement stages evidence before switching state', async () => {
+  LW.Vault.setGeneration('');
+  await LW.Vault.replace([{ id: 'old', candidates: ['甲'] }]);
+  const previous = { records: [{ id: 'old' }], session: { id: 'OLD' }, vaultGeneration: '' };
   const next = { records: [{ id: 'new' }], session: { id: 'NEW' } };
   const incoming = [{ id: 'new', candidates: ['乙'] }];
   let writes = 0;
   const failedStore = { save() { writes++; return false; } };
-  await assert.rejects(LW.replaceSession(previous, next, incoming, { store: failedStore, vault }), /原場次與錄影已保留/);
+  await assert.rejects(LW.replaceSession(previous, { ...next }, incoming, { store: failedStore }), /原場次與錄影已保留/);
   assert.equal(writes, 1);
-  assert.equal(records.has('old'), true);
-  assert.equal(records.has('new'), false);
+  assert.equal((await LW.Vault.get('old')).candidates[0], '甲');
+  assert.equal(await LW.Vault.get('new'), null);
+  const staged = 'vault_aaaaaaaaaaaaaaaa';
+  await LW.Vault.stageSession(staged, incoming);
+  assert.equal((await LW.Vault.get('old')).candidates[0], '甲');
+  LW.Vault.setGeneration(staged);
+  assert.equal((await LW.Vault.get('new')).candidates[0], '乙');
+  LW.Vault.setGeneration('');
+  await LW.Vault.removeSession(staged, incoming);
   const okStore = { save(state) { writes++; assert.equal(state.session.id, 'NEW'); return true; } };
-  await LW.replaceSession(previous, next, incoming, { store: okStore, vault });
-  assert.equal(records.has('new'), true);
-  assert.equal(records.has('old'), false);
+  await LW.replaceSession(previous, next, incoming, { store: okStore });
+  assert.match(next.vaultGeneration, /^vault_[0-9a-f]{16}$/);
+  assert.equal((await LW.Vault.get('new')).candidates[0], '乙');
+  LW.Vault.setGeneration('');
+  assert.equal(await LW.Vault.get('old'), null);
+  LW.Vault.setGeneration(next.vaultGeneration);
   const refusedVault = {
-    async get(id) { return records.get(id) || null; },
-    async replace() { throw new Error('IndexedDB aborted'); },
+    async stageSession() { throw new Error('IndexedDB aborted'); },
   };
   const beforeWriteCount = writes;
   await assert.rejects(LW.replaceSession(next, previous, [{ id: 'old' }], { store: okStore, vault: refusedVault }), /IndexedDB aborted/);
   assert.equal(writes, beforeWriteCount);
-  assert.equal(records.has('new'), true);
+  assert.equal((await LW.Vault.get('new')).candidates[0], '乙');
 });
 
 test('a backup before the first draw can be inspected and restored', async () => {

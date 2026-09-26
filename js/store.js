@@ -46,6 +46,8 @@
   const DRAW_LOCK_MS = 30000;
   let memory = new Map();
   let dbPromise = null;
+  let generation = '';
+  const generationKey = (id, selected = generation) => selected ? `@${selected}/${id}` : id;
 
   function openDB() {
     if (dbPromise) return dbPromise;
@@ -164,26 +166,33 @@
     /** true once IndexedDB is open; false means evidence lives in memory until downloaded */
     durable: false,
     ready: () => openDB(),
+    setGeneration(value) {
+      if (value && !/^vault_[0-9a-f]{16}$/.test(value)) throw new Error('無效的錄影世代識別碼');
+      generation = value || '';
+    },
 
     async put(record) {
+      const stored = { ...record, id: generationKey(record.id) };
       const db = await openDB();
       if (db) {
         try {
-          await run(db, 'readwrite', (s) => s.put(record));
+          await run(db, 'readwrite', (s) => s.put(stored));
           return;
         } catch (_) {
           Vault.durable = false;
         }
       }
-      memory.set(record.id, record);
+      memory.set(stored.id, stored);
     },
 
     async get(id) {
-      if (memory.has(id)) return memory.get(id);
+      const key = generationKey(id);
+      if (memory.has(key)) return { ...memory.get(key), id };
       const db = await openDB();
       if (!db) return null;
       try {
-        return (await run(db, 'readonly', (s) => s.get(id))) || null;
+        const stored = await run(db, 'readonly', (s) => s.get(key));
+        return stored ? { ...stored, id } : null;
       } catch (_) {
         return null;
       }
@@ -196,6 +205,45 @@
 
     async clear() {
       await Vault.replace([]);
+    },
+
+    /** Stage a replacement under a new namespace, leaving the active session intact. */
+    async stageSession(nextGeneration, records) {
+      if (!/^vault_[0-9a-f]{16}$/.test(nextGeneration)) throw new Error('無效的錄影世代識別碼');
+      const staged = records.map((record) => {
+        if (!record || typeof record.id !== 'string' || !record.id) throw new Error('錄影資料缺少識別碼');
+        return { ...record, id: generationKey(record.id, nextGeneration) };
+      });
+      const db = await openDB();
+      if (db) {
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_NAME, 'readwrite');
+          const store = tx.objectStore(STORE_NAME);
+          for (const record of staged) store.put(record);
+          tx.oncomplete = resolve;
+          tx.onerror = () => reject(tx.error);
+          tx.onabort = () => reject(tx.error);
+        });
+      } else {
+        for (const record of staged) memory.set(record.id, record);
+      }
+    },
+
+    /** Cleanup after the state switch. A crash before this point only leaves orphaned evidence. */
+    async removeSession(oldGeneration, records) {
+      const keys = records.map((record) => generationKey(record.id, oldGeneration));
+      const db = await openDB();
+      if (db) {
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_NAME, 'readwrite');
+          const store = tx.objectStore(STORE_NAME);
+          for (const key of keys) store.delete(key);
+          tx.oncomplete = resolve;
+          tx.onerror = () => reject(tx.error);
+          tx.onabort = () => reject(tx.error);
+        });
+      }
+      for (const key of keys) memory.delete(key);
     },
 
     /** Replace all evidence in one IndexedDB transaction; used only after archive validation. */
@@ -225,17 +273,19 @@
     },
   };
 
-  /** Swap a complete session; recover the old evidence if the state write is refused. */
+  /** Stage evidence before switching state; interruption leaves the previously active session intact. */
   async function replaceSession(previousState, nextState, evidence, { store = Store, vault = Vault } = {}) {
-    const previousEvidence = (await Promise.all(previousState.records.map((record) => vault.get(record.id)))).filter(Boolean);
-    await vault.replace(evidence);
-    if (store.save(nextState)) return;
-    try {
-      await vault.replace(previousEvidence);
-    } catch (error) {
-      throw new Error(`場次設定無法儲存，原始錄影回復也失敗：${error.message || error}`);
+    const oldGeneration = previousState.vaultGeneration || '';
+    let nextGeneration;
+    do { nextGeneration = LW.uid('vault'); } while (nextGeneration === oldGeneration);
+    await vault.stageSession(nextGeneration, evidence);
+    nextState.vaultGeneration = nextGeneration;
+    if (!store.save(nextState)) {
+      try { await vault.removeSession(nextGeneration, evidence); } catch (_) { /* orphaned staging can be removed later */ }
+      throw new Error('場次設定無法儲存；原場次與錄影已保留');
     }
-    throw new Error('場次設定無法儲存；原場次與錄影已保留');
+    vault.setGeneration(nextGeneration);
+    try { await vault.removeSession(oldGeneration, previousState.records); } catch (_) { /* old evidence remains as a backup */ }
   }
 
   Object.assign(LW, { Store, Vault, DrawGate, replaceSession });

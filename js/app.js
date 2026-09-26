@@ -26,6 +26,7 @@
       v: VERSION,
       title: SAMPLE.title,
       session: newSession(),
+      vaultGeneration: '',
       prizes: SAMPLE.prizes.map(([name, qty]) => ({ id: LW.uid('prize'), name, qty, eligibleGroup: '', repeatPolicy: 'inherit' })),
       currentPrizeId: null,
       people: SAMPLE.people,
@@ -59,6 +60,7 @@
       v: VERSION,
       title: str(raw.title, 40),
       session: { id: str(raw.session && raw.session.id, 16) || LW.sessionCode(), createdAt: isoOr(raw.session && raw.session.createdAt, now) },
+      vaultGeneration: typeof raw.vaultGeneration === 'string' && /^vault_[0-9a-f]{16}$/.test(raw.vaultGeneration) ? raw.vaultGeneration : '',
       prizes: (Array.isArray(raw.prizes) ? raw.prizes : []).map((p) => ({
         id: str(p && p.id, 64) || LW.uid('prize'),
         name: str(p && p.name, 40),
@@ -137,6 +139,7 @@
   }
 
   const state = loadState();
+  LW.Vault.setGeneration(state.vaultGeneration);
   let phase = 'idle'; // idle → drawing → saving → result → idle
   let zipping = false;
   let clearing = false;
