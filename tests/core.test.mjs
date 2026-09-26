@@ -815,6 +815,20 @@ test('a valid archive with an audit larger than 8 MiB remains independently veri
   const report = await LW.inspectPackage(zip);
   assert.deepEqual(Array.from(report.errors), []);
   assert.equal(report.state.records.length, 20);
+  const auditFiles = LW.auditArchiveFiles(audit, { singleFileBytes: 8 * 1024 * 1024, partBytes: 1024 * 1024 });
+  assert.ok(auditFiles.length > 1);
+  const chunkedEntries = [
+    ...auditFiles.map((file) => ({ name: `包/${file.name}`, data: file.data })),
+    { name: '包/中獎名單.csv', data: csv },
+    { name: '包/場次狀態.json', data: JSON.stringify({ format: 'lucky-wheel-session/1', state }) },
+    { name: '包/SHA256SUMS.txt', data: '' },
+  ];
+  const chunked = await LW.inspectPackage(await LW.makeZip(chunkedEntries));
+  assert.deepEqual(Array.from(chunked.errors), []);
+  assert.equal(chunked.audit.format, 'lucky-wheel-audit/3');
+  assert.equal(chunked.audit.draws.length, 20);
+  const missingPart = await LW.makeZip(chunkedEntries.filter((entry) => !entry.name.endsWith(auditFiles[1].name)));
+  await assert.rejects(LW.inspectPackage(missingPart), /缺少或過大的 抽次\//);
 });
 
 test('archive export reports text files too large for the built-in verifier', () => {

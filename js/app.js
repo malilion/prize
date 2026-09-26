@@ -1380,7 +1380,7 @@
     };
   }
 
-  function readmeText(now, draws, missing, snapshotIssues = [], oversizedText = []) {
+  function readmeText(now, draws, missing, snapshotIssues = [], oversizedText = [], drawPartCount = 0) {
     const count = (status) => state.records.filter((r) => r.status === status).length;
     const lines = [
       '抽獎憑證包　驗證說明',
@@ -1393,7 +1393,9 @@
       '',
       '【內容】',
       '中獎名單.csv　每一抽的獎項、中獎者、UTC 時間、錄影檔名與 SHA-256，可直接用 Excel 開啟。',
-      '抽獎紀錄.json　完整稽核紀錄，含每一抽當下的候選名單（candidates）。',
+      drawPartCount
+        ? `抽獎紀錄.json　稽核索引；抽次/ 內有 ${drawPartCount} 份稽核分卷，保存每一抽的候選名單（candidates）。`
+        : '抽獎紀錄.json　完整稽核紀錄，含每一抽當下的候選名單（candidates）。',
       '場次狀態.json　完整場次設定、獎項、名單與抽獎紀錄，可在「設定 → 還原場次備份」讀取。',
       '錄影/　　　　　每一抽的完整錄影，畫面下方顯示場次、抽次、候選人數、名單指紋與時間。',
       'SHA256SUMS.txt　所有錄影檔的 SHA-256 雜湊值。',
@@ -1411,7 +1413,7 @@
       '',
       '【確認候選名單】',
       '錄影畫面下方的「名單指紋」是那一抽候選名單的 SHA-256 前後各 8 碼。',
-      '把 抽獎紀錄.json 中該抽的 candidates 依序以換行字元連接（最後不加換行）後計算 SHA-256，',
+      `把 ${drawPartCount ? '抽次/ 分卷' : '抽獎紀錄.json'} 中該抽的 candidates 依序以換行字元連接（最後不加換行）後計算 SHA-256，`,
       '結果應與 candidatesSha256 完全相同；winnerIndex 指出中獎者在名單中的位置（從 0 起算）。',
       '驗證只確認憑證包內部一致性；若整包被重建，仍需與活動當時公開的雜湊值比對。',
     ];
@@ -1469,16 +1471,17 @@
             } else missing.push(r);
           }
         }
+        const auditFiles = LW.auditArchiveFiles(auditDoc(draws, now));
         const textFiles = [
           { name: '中獎名單.csv', data: LW.toCSV(csvRows()) },
-          { name: '抽獎紀錄.json', data: JSON.stringify(auditDoc(draws, now), null, 2) },
+          ...auditFiles,
           { name: '場次狀態.json', data: JSON.stringify({ format: 'lucky-wheel-session/1', exportedAt: now.toISOString(), state }, null, 2) },
           { name: 'SHA256SUMS.txt', data: sums.length ? `${sums.join('\n')}\n` : '' },
         ];
         const oversizedText = LW.archiveTextLimitIssues(textFiles);
         const entries = [
           ...textFiles.map((file) => ({ name: `${folder}/${file.name}`, data: file.data })),
-          { name: `${folder}/驗證說明.txt`, data: readmeText(now, draws, missing, snapshotIssues, oversizedText) },
+          { name: `${folder}/驗證說明.txt`, data: readmeText(now, draws, missing, snapshotIssues, oversizedText, auditFiles.length - 1) },
           ...videos,
         ];
         const zip = await LW.makeZip(entries, {

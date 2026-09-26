@@ -10,9 +10,39 @@
     '中獎名單.csv': 16 * 1024 * 1024,
     'SHA256SUMS.txt': 8 * 1024 * 1024,
   });
+  const MAX_DRAW_PART_BYTES = 64 * 1024 * 1024;
+  const DRAW_PART_TARGET_BYTES = 32 * 1024 * 1024;
+  const textLimit = (name) => /^抽次\/\d{4}\.json$/.test(name) ? MAX_DRAW_PART_BYTES : MAX_TEXT_BYTES[name];
   function archiveTextLimitIssues(entries) {
-    return entries.filter(({ name, data }) => MAX_TEXT_BYTES[name] &&
-      new Blob([data]).size > MAX_TEXT_BYTES[name]).map(({ name }) => name);
+    return entries.filter(({ name, data }) => textLimit(name) &&
+      new Blob([data]).size > textLimit(name)).map(({ name }) => name);
+  }
+
+  function auditArchiveFiles(audit, { singleFileBytes = MAX_TEXT_BYTES['抽獎紀錄.json'], partBytes = DRAW_PART_TARGET_BYTES } = {}) {
+    const fullText = JSON.stringify(audit, null, 2);
+    if (new Blob([fullText]).size <= singleFileBytes) return [{ name: '抽獎紀錄.json', data: fullText }];
+    const manifest = { ...audit, format: 'lucky-wheel-audit/3', draws: [], drawParts: [] };
+    const parts = [];
+    let current = [];
+    let currentBytes = 2;
+    const flush = () => {
+      if (!current.length) return;
+      const name = `抽次/${String(parts.length + 1).padStart(4, '0')}.json`;
+      parts.push({ name, data: JSON.stringify(current) });
+      manifest.drawParts.push({ file: name, count: current.length });
+      current = [];
+      currentBytes = 2;
+    };
+    for (const draw of audit.draws) {
+      const bytes = new Blob([JSON.stringify(draw)]).size;
+      if (bytes + 2 > MAX_DRAW_PART_BYTES) throw new Error('單抽稽核資料超過獨立驗證頁的讀取上限');
+      if (current.length && currentBytes + bytes + 1 > partBytes) flush();
+      current.push(draw);
+      currentBytes += bytes + (current.length > 1 ? 1 : 0);
+    }
+    flush();
+    if (parts.length > 4096) throw new Error('稽核分卷過多，無法建立憑證包');
+    return [{ name: '抽獎紀錄.json', data: JSON.stringify(manifest, null, 2) }, ...parts];
   }
   const AUDIT_CSV_HEADER = Object.freeze(['序號', '獎項', '中獎者', '抽出時間（UTC）', '狀態', '備註', '候選人數', '名單指紋（SHA-256）', '錄影檔名', '錄影 SHA-256', '場次代碼']);
   const LEGACY_CSV_HEADER = [...AUDIT_CSV_HEADER];
@@ -94,11 +124,29 @@
       const file = files.get(prefix + name);
       // Candidate names and keys repeat in every draw. A normal event can produce an
       // audit larger than 8 MiB while the actual saved session remains small.
-      if (!file || file.size > MAX_TEXT_BYTES[name]) throw new Error(`缺少或過大的 ${name}`);
+      if (!file || file.size > textLimit(name)) throw new Error(`缺少或過大的 ${name}`);
       return decoder.decode(await file.arrayBuffer());
     };
     const audit = JSON.parse(await readText('抽獎紀錄.json'));
-    if (!audit || !['lucky-wheel-audit/1', 'lucky-wheel-audit/2'].includes(audit.format) || !Array.isArray(audit.draws) || audit.draws.length > 100000 || !audit.event || typeof audit.event.sessionId !== 'string') throw new Error('抽獎紀錄格式不正確或抽次過多');
+    if (!audit || !['lucky-wheel-audit/1', 'lucky-wheel-audit/2', 'lucky-wheel-audit/3'].includes(audit.format) ||
+      !Array.isArray(audit.draws) || audit.draws.length > 100000 || !audit.event || typeof audit.event.sessionId !== 'string') throw new Error('抽獎紀錄格式不正確或抽次過多');
+    const drawPartNames = new Set();
+    if (audit.format === 'lucky-wheel-audit/3') {
+      if (audit.draws.length || !Array.isArray(audit.drawParts) || audit.drawParts.length < 1 || audit.drawParts.length > 4096) throw new Error('稽核分卷索引格式不正確');
+      let declaredDraws = 0;
+      for (const [index, part] of audit.drawParts.entries()) {
+        const expectedName = `抽次/${String(index + 1).padStart(4, '0')}.json`;
+        if (!part || part.file !== expectedName || !Number.isSafeInteger(part.count) || part.count < 1) throw new Error('稽核分卷索引格式不正確');
+        declaredDraws += part.count;
+        if (declaredDraws > 100000) throw new Error('稽核分卷抽次過多');
+        drawPartNames.add(part.file);
+      }
+      for (const part of audit.drawParts) {
+        const draws = JSON.parse(await readText(part.file));
+        if (!Array.isArray(draws) || draws.length !== part.count) throw new Error(`稽核分卷抽次不符：${part.file}`);
+        audit.draws.push(...draws);
+      }
+    }
     const backup = files.has(prefix + '場次狀態.json') ? JSON.parse(await readText('場次狀態.json')) : null;
     const oldKeyCollision = backup?.state?.rosterKeyScheme !== 2 && typeof backup?.state?.people === 'string' && backup.state.people.length <= 2000000 &&
       typeof LW.legacyRosterKeyCollision === 'function' && LW.legacyRosterKeyCollision(backup.state.people);
@@ -117,10 +165,10 @@
     const known = new Set(['中獎名單.csv', '抽獎紀錄.json', '場次狀態.json', 'SHA256SUMS.txt', '驗證說明.txt']);
     for (const name of files.keys()) {
       const relative = name.slice(prefix.length);
-      if (!known.has(relative) && !relative.startsWith('錄影/')) errors.push(`憑證包有未知檔案：${relative}`);
+      if (!known.has(relative) && !drawPartNames.has(relative) && !relative.startsWith('錄影/')) errors.push(`憑證包有未知檔案：${relative}`);
     }
     const csv = LW.parseCSV(await readText('中獎名單.csv'));
-    const expectedHeader = audit.format === 'lucky-wheel-audit/2' ? AUDIT_CSV_HEADER : LEGACY_CSV_HEADER;
+    const expectedHeader = audit.format === 'lucky-wheel-audit/1' ? LEGACY_CSV_HEADER : AUDIT_CSV_HEADER;
     if (JSON.stringify(csv[0]) !== JSON.stringify(expectedHeader)) errors.push('中獎名單.csv 的表頭不正確');
     if (csv.length !== audit.draws.length + 1) errors.push('中獎名單.csv 的抽次數量與稽核紀錄不符');
     if (audit.format === 'lucky-wheel-audit/1') warnings.push('舊版憑證包的 CSV 使用未標示時區的本地時間，無法驗證時間欄位');
@@ -132,7 +180,7 @@
       if (!draw || typeof draw !== 'object' || Array.isArray(draw)) throw new Error(`${tag}：抽獎紀錄格式不正確`);
       if (draw.video != null && (typeof draw.video !== 'object' || Array.isArray(draw.video) ||
         (draw.video.file != null && (typeof draw.video.file !== 'string' || !draw.video.file)))) throw new Error(`${tag}：錄影資料格式不正確`);
-      if (audit.format === 'lucky-wheel-audit/2' &&
+      if (audit.format !== 'lucky-wheel-audit/1' &&
         (!Array.isArray(draw.candidateKeys) || typeof draw.winnerKey !== 'string' || !draw.winnerKey ||
           !draw.eligibility || typeof draw.eligibility !== 'object' || Array.isArray(draw.eligibility) ||
           typeof draw.eligibility.eligibleGroup !== 'string' ||
@@ -150,7 +198,7 @@
       const utc = typeof draw.drawnAt === 'string' && !Number.isNaN(Date.parse(draw.drawnAt))
         ? new Date(draw.drawnAt).toISOString() : null;
       if (!csvRow || csvRow.length !== expectedHeader.length || csvRow[0] !== String(draw.seq) || csvRow[1] !== safeCell(draw.prize) || csvRow[2] !== safeCell(draw.winner) ||
-        (audit.format === 'lucky-wheel-audit/2' && csvRow[3] !== utc) || csvRow[4] !== statusLabel || csvRow[5] !== safeCell(note) ||
+        (audit.format !== 'lucky-wheel-audit/1' && csvRow[3] !== utc) || csvRow[4] !== statusLabel || csvRow[5] !== safeCell(note) ||
         csvRow[6] !== String(draw.candidateCount) || csvRow[7] !== draw.candidatesSha256 || csvRow[8] !== (draw.video?.file || '') || csvRow[9] !== (draw.video?.sha256 || '') || csvRow[10] !== audit.event.sessionId) errors.push(`${tag}：中獎名單.csv 與稽核紀錄不符`);
       if (!draw || draw.seq !== i + 1 || typeof draw.id !== 'string' || ids.has(draw.id) || !['valid', 'void', 'aborted'].includes(draw.status)) errors.push(`${tag}：抽次、ID 或狀態不正確`);
       if (draw && typeof draw.id === 'string') ids.add(draw.id);
@@ -232,11 +280,11 @@
           }
         }
       }
-    } else if (audit.format === 'lucky-wheel-audit/2') {
+    } else if (audit.format !== 'lucky-wheel-audit/1') {
       errors.push('新版憑證包缺少場次狀態.json，無法核對完整名單與候選人資格');
     } else warnings.push('舊版憑證包沒有場次狀態.json，無法還原完整場次');
     return { files, prefix, audit, state, snapshots, errors, warnings };
   }
 
-  Object.assign(LW, { inspectPackage, inspectDrawEvidence, archiveTextLimitIssues, formatVerificationReport, AUDIT_CSV_HEADER });
+  Object.assign(LW, { inspectPackage, inspectDrawEvidence, archiveTextLimitIssues, auditArchiveFiles, formatVerificationReport, AUDIT_CSV_HEADER });
 })(typeof window !== 'undefined' ? window : globalThis);
