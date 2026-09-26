@@ -752,7 +752,20 @@
 
     record.status = 'valid';
     record.drawnAt = new Date().toISOString();
-    persist(true);
+    if (!persist(true)) {
+      if (recorder) recorder.cancel();
+      stage.setRecording(null);
+      record.status = 'aborted';
+      record.abortReason = '轉盤停止後無法保存有效中獎結果';
+      record.video = recorder ? { state: 'failed', error: '結果儲存失敗，錄影已取消' } : { state: 'none' };
+      persist(true); // the previously saved pending record still becomes aborted after a reload
+      phase = 'idle';
+      renderAll();
+      syncStage();
+      stage.setView({ readout: { label: '結果未保存，抽獎中斷', text: null, tone: 'muted' } });
+      toast('轉盤已停止，但有效中獎結果無法保存，因此這一抽已標記為中斷。請先檢查儲存空間並匯出憑證包。', { tone: 'error', timeout: 0 });
+      return;
+    }
 
     stage.setView({
       prize: { name: record.prizeName, total: prize.qty, remaining: remaining(prize) },
@@ -897,10 +910,14 @@
         LW.download(out.blob, file);
         record.video.downloaded = true;
       }
-      persist(true);
-      toast(state.settings.autoDownload
-        ? `第 ${record.seq} 抽的錄影已下載（${LW.formatBytes(out.blob.size)}）`
-        : `第 ${record.seq} 抽的錄影已存好，可以在「紀錄」下載`, { timeout: 4000 });
+      const metadataSaved = persist(true);
+      if (metadataSaved) {
+        toast(state.settings.autoDownload
+          ? `第 ${record.seq} 抽的錄影已下載（${LW.formatBytes(out.blob.size)}）`
+          : `第 ${record.seq} 抽的錄影已存好，可以在「紀錄」下載`, { timeout: 4000 });
+      } else {
+        toast(`第 ${record.seq} 抽的錄影已產生，但雜湊值無法保存到瀏覽器紀錄。請保持頁面開啟並立即匯出憑證包。`, { tone: 'error', timeout: 0 });
+      }
     } catch (err) {
       record.video = { state: 'failed', error: (err && err.message) || String(err) };
       persist(true);
@@ -1271,12 +1288,24 @@
     const r = state.records.find((x) => x.id === dlg.dataset.id);
     if (!r || r.status !== 'valid') return;
     const form = $('form', dlg);
-    r.status = 'void';
-    r.voidReason = form.elements.reason.value.trim() || '未註明';
-    r.voidAt = new Date().toISOString();
-    r.returnToPool = form.elements.back.checked;
+    const index = state.records.indexOf(r);
+    const previousPrizeId = state.currentPrizeId;
+    state.records[index] = {
+      ...r,
+      status: 'void',
+      voidReason: form.elements.reason.value.trim() || '未註明',
+      voidAt: new Date().toISOString(),
+      returnToPool: form.elements.back.checked,
+    };
     state.currentPrizeId = r.prizeId; // the freed slot is usually redrawn right away
-    persist(true);
+    if (!persist(true)) {
+      state.records[index] = r;
+      state.currentPrizeId = previousPrizeId;
+      renderAll();
+      syncStage();
+      toast('作廢狀態無法保存，這一抽仍保持有效；請先修復瀏覽器儲存問題。', { tone: 'error', timeout: 0 });
+      return;
+    }
     leaveResult();
     renderAll();
     syncStage();

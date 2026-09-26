@@ -104,6 +104,14 @@ test('session replacement preserves the old state and evidence when saving fails
   await LW.replaceSession(previous, next, incoming, { store: okStore, vault });
   assert.equal(records.has('new'), true);
   assert.equal(records.has('old'), false);
+  const refusedVault = {
+    async get(id) { return records.get(id) || null; },
+    async replace() { throw new Error('IndexedDB aborted'); },
+  };
+  const beforeWriteCount = writes;
+  await assert.rejects(LW.replaceSession(next, previous, [{ id: 'old' }], { store: okStore, vault: refusedVault }), /IndexedDB aborted/);
+  assert.equal(writes, beforeWriteCount);
+  assert.equal(records.has('new'), true);
 });
 
 test('a backup before the first draw can be inspected and restored', async () => {
