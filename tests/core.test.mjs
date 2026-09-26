@@ -340,4 +340,10 @@ test('standalone inspector verifies candidate, winner, video, and restorable sta
   assert.ok(missing.warnings.some((warning) => warning.includes('錄影未包含')));
   const changedPrize = await LW.inspectPackage(await archive(draw, true, (audit) => { audit.prizes[0].quantity = 2; }));
   assert.ok(changedPrize.errors.some((error) => error.includes('獎項清單')));
+  await assert.rejects(LW.inspectPackage(await archive(null)), /第 1 抽：抽獎紀錄格式不正確/);
+  await assert.rejects(LW.inspectPackage(await archive({ ...draw, video: { ...draw.video, file: 7 } })), /第 1 抽：錄影資料格式不正確/);
+  const malformedKeys = await LW.inspectPackage(await archive({ ...draw, candidateKeys: 'bad' }));
+  assert.ok(malformedKeys.errors.some((error) => error.includes('候選識別鍵')));
+  const emptyPrize = await LW.inspectPackage(await archive(draw, true, (audit) => { audit.prizes[0] = null; }));
+  assert.ok(emptyPrize.errors.some((error) => error.includes('獎項清單')));
 });

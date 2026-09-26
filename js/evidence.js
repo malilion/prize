@@ -16,7 +16,7 @@
       return decoder.decode(await file.arrayBuffer());
     };
     const audit = JSON.parse(await readText('抽獎紀錄.json'));
-    if (audit.format !== 'lucky-wheel-audit/1' || !Array.isArray(audit.draws) || !audit.event || typeof audit.event.sessionId !== 'string') throw new Error('抽獎紀錄格式不正確');
+    if (!audit || audit.format !== 'lucky-wheel-audit/1' || !Array.isArray(audit.draws) || audit.draws.length > 100000 || !audit.event || typeof audit.event.sessionId !== 'string') throw new Error('抽獎紀錄格式不正確或抽次過多');
     const lines = (await readText('SHA256SUMS.txt')).trim().split(/\r?\n/).filter(Boolean);
     const sums = new Map();
     for (const line of lines) {
@@ -38,6 +38,9 @@
     const ids = new Set();
     for (const [i, draw] of audit.draws.entries()) {
       const tag = `第 ${i + 1} 抽`;
+      if (!draw || typeof draw !== 'object' || Array.isArray(draw)) throw new Error(`${tag}：抽獎紀錄格式不正確`);
+      if (draw.video != null && (typeof draw.video !== 'object' || Array.isArray(draw.video) ||
+        (draw.video.file != null && (typeof draw.video.file !== 'string' || !draw.video.file)))) throw new Error(`${tag}：錄影資料格式不正確`);
       const csvRow = csv[i + 1];
       const safeCell = (value) => /^[=+\-@\t\r]/.test(String(value)) ? `'${value}` : String(value);
       const statusLabel = { valid: '有效', void: '作廢', aborted: '中斷' }[draw.status];
@@ -73,20 +76,23 @@
     let state = null;
     if (files.has(prefix + '場次狀態.json')) {
       const backup = JSON.parse(await readText('場次狀態.json'));
-      if (backup.format !== 'lucky-wheel-session/1' || !backup.state || backup.state.v !== 1 || !Array.isArray(backup.state.records) || backup.state.records.length !== audit.draws.length || backup.state.session?.id !== audit.event.sessionId) errors.push('場次備份格式或抽次與稽核紀錄不符');
+      if (!backup || backup.format !== 'lucky-wheel-session/1' || !backup.state || backup.state.v !== 1 || !Array.isArray(backup.state.records) || backup.state.records.length !== audit.draws.length || backup.state.session?.id !== audit.event.sessionId) errors.push('場次備份格式或抽次與稽核紀錄不符');
       else {
         state = backup.state;
-        if (!Array.isArray(state.prizes) || typeof state.people !== 'string' || !state.settings || state.prizes.length > 1000 || state.records.length > 100000 || state.people.length > 2000000) errors.push('場次備份內容不完整或超出限制');
+        if (typeof state.title !== 'string' || !Array.isArray(state.prizes) || typeof state.people !== 'string' || !state.settings || state.prizes.length > 1000 || state.records.length > 100000 || state.people.length > 2000000 ||
+          state.prizes.some((prize) => !prize || typeof prize !== 'object' || typeof prize.id !== 'string' || typeof prize.name !== 'string') ||
+          state.records.some((record) => !record || typeof record !== 'object' || typeof record.id !== 'string')) throw new Error('場次備份內容不完整或超出限制');
         const roster = typeof LW.parsePeople === 'function' && typeof state.people === 'string' ? LW.parsePeople(state.people) : null;
         const peopleByKey = roster ? new Map(roster.map((p) => [p.key, p])) : null;
         if (audit.event.title !== state.title?.trim() || audit.event.sessionCreatedAt !== state.session?.createdAt) errors.push('活動名稱或建立時間與場次備份不符');
         if (roster && (JSON.stringify(roster.map((p) => p.name)) !== JSON.stringify(audit.participants) || JSON.stringify(roster) !== JSON.stringify(audit.participantDetails))) errors.push('場次名單與稽核紀錄中的參加者不符');
         if (!Array.isArray(audit.prizes) || audit.prizes.length !== state.prizes.length || audit.prizes.some((p, i) => {
           const prize = state.prizes[i];
-          return p.id !== prize.id || p.name !== (prize.name.trim() || '未命名獎項') || p.quantity !== prize.qty || p.eligibleGroup !== (prize.eligibleGroup || '') || p.repeatPolicy !== (prize.repeatPolicy || 'inherit') || p.drawn !== state.records.filter((r) => r.prizeId === prize.id && r.status === 'valid').length;
+          return !p || typeof p !== 'object' || p.id !== prize.id || p.name !== (prize.name.trim() || '未命名獎項') || p.quantity !== prize.qty || p.eligibleGroup !== (prize.eligibleGroup || '') || p.repeatPolicy !== (prize.repeatPolicy || 'inherit') || p.drawn !== state.records.filter((r) => r.prizeId === prize.id && r.status === 'valid').length;
         })) errors.push('獎項清單與場次備份不符');
         for (const [i, r] of state.records.entries()) {
           const d = audit.draws[i];
+          if (!d || typeof d !== 'object') throw new Error(`第 ${i + 1} 抽：抽獎紀錄格式不正確`);
           const video = r.video || { state: 'none' };
           const videoMismatch = video.state === 'ready'
             ? video.file !== d.video?.file || video.mime !== d.video?.mimeType || video.size !== d.video?.bytes || video.durationMs !== d.video?.durationMs || video.sha256 !== d.video?.sha256
@@ -95,7 +101,7 @@
             ? r.voidReason !== d.void?.reason || r.voidAt !== d.void?.at || !!r.returnToPool !== d.void?.returnedToPool
             : r.status === 'aborted' ? r.abortReason !== d.aborted?.reason : !!d.void || !!d.aborted;
           if (r.id !== d.id || r.seq !== d.seq || r.drawnAt !== d.drawnAt || r.name !== d.winner || r.key !== d.winnerKey || r.index !== d.winnerIndex || r.candidateCount !== d.candidateCount || r.candidatesHash !== d.candidatesSha256 || r.status !== d.status || r.prizeName !== d.prize || JSON.stringify(r.rule || null) !== JSON.stringify(d.eligibility || null) || videoMismatch || statusMismatch) errors.push(`第 ${i + 1} 抽：場次備份與稽核紀錄不符`);
-          if (d.candidateKeys && peopleByKey) {
+          if (Array.isArray(d.candidateKeys) && peopleByKey) {
             for (const [n, key] of d.candidateKeys.entries()) {
               const person = peopleByKey.get(key);
               if (!person || person.name !== d.candidates?.[n] || (d.eligibility?.eligibleGroup && person.group !== d.eligibility.eligibleGroup)) { errors.push(`第 ${i + 1} 抽：候選人或組別不在場次名單中`); break; }
