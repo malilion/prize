@@ -305,7 +305,12 @@
       typeof value.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(value.sha256) ||
       typeof value.exportedAt !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value.exportedAt) ||
       Number.isNaN(Date.parse(value.exportedAt)) || new Date(value.exportedAt).toISOString() !== value.exportedAt) return null;
-    return { sessionId, fileName: value.fileName, sha256: value.sha256, exportedAt: value.exportedAt };
+    const counts = value.drawCounts;
+    if (counts != null && (!counts || typeof counts !== 'object' || Array.isArray(counts) ||
+      !['total', 'valid', 'void'].every((key) => Number.isSafeInteger(counts[key]) && counts[key] >= 0) ||
+      counts.valid + counts.void > counts.total)) return null;
+    return { sessionId, fileName: value.fileName, sha256: value.sha256, exportedAt: value.exportedAt,
+      ...(counts == null ? {} : { drawCounts: { total: counts.total, valid: counts.valid, void: counts.void } }) };
   }
 
   function exportReceiptText(receipt) {

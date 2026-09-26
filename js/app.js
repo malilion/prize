@@ -707,10 +707,10 @@
     el.printValid.disabled = !valid || busy();
     el.exportZip.disabled = !state.records.length || busy() || zipping;
     el.verify.disabled = !readyVideos().length;
-    renderExportReceipt();
+    renderExportReceipt({ total: state.records.length, valid, void: voided });
   }
 
-  function renderExportReceipt() {
+  function renderExportReceipt(counts = null) {
     const visible = exportReceipt && exportReceipt.sessionId === state.session.id;
     $('#export-hash').hidden = !visible;
     if (!visible) return;
@@ -720,6 +720,15 @@
     time.textContent = LW.formatDateTime(exportReceipt.exportedAt);
     $('#export-hash-value').textContent = exportReceipt.sha256;
     $('#export-receipt-warning').hidden = exportReceiptSaved;
+    const current = counts || {
+      total: state.records.length,
+      valid: state.records.filter((record) => record.status === 'valid').length,
+      void: state.records.filter((record) => record.status === 'void').length,
+    };
+    const saved = exportReceipt.drawCounts;
+    $('#export-receipt-unknown').hidden = !!saved;
+    $('#export-receipt-stale').hidden = !saved ||
+      (saved.total === current.total && saved.valid === current.valid && saved.void === current.void);
   }
 
   /* ----- settings ----- */
@@ -1442,7 +1451,12 @@
         if (storageProblem || staleState || !freshStore()) throw new Error('打包期間場次資料已變更，請重新整理後重新匯出');
         const fileName = `${folder}.zip`;
         LW.download(zip, fileName);
-        exportReceipt = LW.normalizeExportReceipt({ sessionId: state.session.id, fileName, sha256: packageHash, exportedAt: now.toISOString() }, state.session.id);
+        exportReceipt = LW.normalizeExportReceipt({ sessionId: state.session.id, fileName, sha256: packageHash, exportedAt: now.toISOString(),
+          drawCounts: {
+            total: state.records.length,
+            valid: state.records.filter((record) => record.status === 'valid').length,
+            void: state.records.filter((record) => record.status === 'void').length,
+          } }, state.session.id);
         exportReceiptSaved = LW.Store.setPref('lastExportReceipt', exportReceipt);
         for (const v of videos) v.record.video.downloaded = true;
         persist(true);

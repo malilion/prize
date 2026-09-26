@@ -31,6 +31,11 @@ test('export receipt binds a ZIP hash to its file and session', () => {
   assert.equal(LW.normalizeExportReceipt({ ...receipt, fileName: '../包.zip' }, receipt.sessionId), null);
   assert.equal(LW.normalizeExportReceipt({ ...receipt, sha256: 'invalid' }, receipt.sessionId), null);
   assert.equal(LW.normalizeExportReceipt({ ...receipt, exportedAt: '2026-02-30T01:02:03.000Z' }, receipt.sessionId), null);
+  const counted = LW.normalizeExportReceipt({ ...receipt, drawCounts: { total: 5, valid: 3, void: 1 } }, receipt.sessionId);
+  assert.deepEqual({ ...counted.drawCounts }, { total: 5, valid: 3, void: 1 });
+  assert.equal(LW.normalizeExportReceipt({ ...receipt, drawCounts: { total: 5, valid: 6, void: 0 } }, receipt.sessionId), null);
+  assert.equal(LW.normalizeExportReceipt({ ...receipt, drawCounts: { total: -1, valid: 0, void: 0 } }, receipt.sessionId), null);
+  assert.equal(LW.normalizeExportReceipt(receipt, receipt.sessionId).drawCounts, undefined);
   const text = LW.exportReceiptText(receipt);
   assert.match(text, /ZIP 檔名：抽獎憑證包\.zip/);
   assert.match(text, new RegExp(`ZIP SHA-256：${receipt.sha256}`));

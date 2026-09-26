@@ -168,6 +168,8 @@
               <button class="btn btn--sm btn--ghost" id="export-receipt-download" type="button">下載文字收據</button>
             </div>
             <p class="pane__note">指紋只對上述 ZIP 有效。請保存原始 ZIP，並在活動時透過獨立管道公布指紋。</p>
+            <p class="pane__note is-warning" id="export-receipt-stale" hidden>這份 ZIP 匯出後，抽次或作廢狀態已有變動。請重新匯出憑證包，再公布新的指紋。</p>
+            <p class="pane__note is-warning" id="export-receipt-unknown" hidden>這份較早的收據沒有抽次摘要，無法判斷場次是否已變動；公布前請重新匯出憑證包。</p>
             <p class="pane__note is-warning" id="export-receipt-warning" hidden>瀏覽器無法保存這份收據；重新整理前請下載文字收據。</p>
           </div>
           <p class="pane__note"><a href="verify.html" target="_blank" rel="noopener">開啟獨立憑證驗證頁</a>，可在另一台電腦離線驗證 ZIP。</p>
