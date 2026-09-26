@@ -3,20 +3,53 @@
   'use strict';
   const LW = (root.LW = root.LW || {});
   function parsePeople(text) {
-    const seen = new Map();
-    const list = [];
+    const entries = [];
     for (const line of text.split(/\r?\n/)) {
       const raw = line.trim();
       const separator = /\s+\|\s+/.exec(raw);
       const name = (separator ? raw.slice(0, separator.index) : raw).replace(/\s+/g, ' ').trim();
       const group = (separator ? raw.slice(separator.index + separator[0].length) : '').replace(/\s+/g, ' ').trim();
-      if (!name) continue;
+      if (name) entries.push({ name, group, identity: group ? `${name} | ${group}` : name });
+    }
+    // Reserve every literal identity before assigning duplicate suffixes. Otherwise a
+    // second "甲" could receive the same key as someone actually named "甲#2".
+    const identities = new Set(entries.map((entry) => entry.identity));
+    const seen = new Map();
+    const used = new Set();
+    const list = [];
+    for (const { name, group, identity } of entries) {
+      let n = (seen.get(identity) || 0) + 1;
+      let key = identity;
+      if (n > 1) {
+        while (identities.has(`${identity}#${n}`) || used.has(`${identity}#${n}`)) n++;
+        key = `${identity}#${n}`;
+      }
+      seen.set(identity, n);
+      used.add(key);
+      list.push({ name, group, key });
+    }
+    return list;
+  }
+  function legacyRosterKeyCollision(text) {
+    const seen = new Map();
+    const used = new Set();
+    for (const { name, group } of parsePeople(text)) {
       const identity = group ? `${name} | ${group}` : name;
       const n = (seen.get(identity) || 0) + 1;
       seen.set(identity, n);
-      list.push({ name, group, key: n > 1 ? `${identity}#${n}` : identity });
+      const key = n > 1 ? `${identity}#${n}` : identity;
+      if (used.has(key)) return true;
+      used.add(key);
     }
-    return list;
+    return false;
+  }
+  function rosterIdentifierIssue(list) {
+    for (const [index, person] of list.entries()) {
+      if (person.name.length > 200) return `名單第 ${index + 1} 位的姓名超過 200 字元`;
+      if (person.group.length > 40) return `名單第 ${index + 1} 位的組別超過 40 字元`;
+      if (person.key.length > 220) return `名單第 ${index + 1} 位的識別鍵超過 220 字元`;
+    }
+    return '';
   }
   function allowsRepeat(prize, settings) {
     const policy = prize?.repeatPolicy || 'inherit';
@@ -73,5 +106,5 @@
 
   const rosterLinesFromRows = (rows, isTable = false) => rosterImportFromRows(rows, isTable).lines;
 
-  Object.assign(LW, { parsePeople, allowsRepeat, eligiblePeople, exclusiveCapacity, rosterImportFromRows, rosterLinesFromRows });
+  Object.assign(LW, { parsePeople, legacyRosterKeyCollision, rosterIdentifierIssue, allowsRepeat, eligiblePeople, exclusiveCapacity, rosterImportFromRows, rosterLinesFromRows });
 })(typeof window !== 'undefined' ? window : globalThis);

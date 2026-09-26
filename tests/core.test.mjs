@@ -297,6 +297,26 @@ test('eligibility applies group and per-prize repeat rules', () => {
   assert.equal(LW.allowsRepeat({ repeatPolicy: 'inherit' }, { allowRepeat: true }), true);
 });
 
+test('duplicate roster keys cannot collide with literal suffixed names', () => {
+  assert.equal(LW.legacyRosterKeyCollision('甲\n甲\n甲#2'), true);
+  assert.equal(LW.legacyRosterKeyCollision('甲\n甲\n乙'), false);
+  const people = LW.parsePeople('甲\n甲\n甲#2\n甲#3\n甲');
+  assert.deepEqual(Array.from(people, (person) => person.key), [
+    '甲', '甲#4', '甲#2', '甲#3', '甲#5',
+  ]);
+  assert.equal(new Set(people.map((person) => person.key)).size, people.length);
+  const remaining = LW.eligiblePeople(people, [{ key: people[1].key, status: 'valid' }],
+    { repeatPolicy: 'exclude' }, { allowRepeat: false });
+  assert.deepEqual(Array.from(remaining, (person) => person.name), ['甲', '甲#2', '甲#3', '甲']);
+  const grouped = LW.parsePeople('甲 | 業務\n甲 | 業務\n甲 | 業務#2');
+  assert.deepEqual(Array.from(grouped, (person) => person.key), ['甲 | 業務', '甲 | 業務#3', '甲 | 業務#2']);
+  assert.equal(LW.legacyRosterKeyCollision('甲 | 業務\n甲 | 業務\n甲 | 業務#2'), true);
+  assert.equal(LW.rosterIdentifierIssue(people), '');
+  assert.match(LW.rosterIdentifierIssue(LW.parsePeople('甲'.repeat(201))), /姓名超過 200/);
+  assert.match(LW.rosterIdentifierIssue(LW.parsePeople(`甲 | ${'組'.repeat(41)}`)), /組別超過 40/);
+  assert.match(LW.rosterIdentifierIssue(LW.parsePeople(`${'甲'.repeat(190)} | ${'組'.repeat(30)}`)), /識別鍵超過 220/);
+});
+
 test('preflight capacity combines exclusive prize demand by group and excludes held winners', () => {
   const people = LW.parsePeople('甲 | 業務\n乙 | 業務\n丙 | 工程');
   const held = [{ key: people[0].key, status: 'valid' }];

@@ -28,6 +28,7 @@
       v: VERSION,
       title: SAMPLE.title,
       session: newSession(),
+      rosterKeyScheme: 2,
       vaultGeneration: '',
       prizes: SAMPLE.prizes.map(([name, qty]) => ({ id: LW.uid('prize'), name, qty, eligibleGroup: '', repeatPolicy: 'inherit' })),
       currentPrizeId: null,
@@ -62,6 +63,7 @@
       v: VERSION,
       title: str(raw.title, 40),
       session: { id: str(raw.session && raw.session.id, 16) || LW.sessionCode(), createdAt: isoOr(raw.session && raw.session.createdAt, now) },
+      rosterKeyScheme: raw.rosterKeyScheme === 2 || !raw.records?.length || !LW.legacyRosterKeyCollision(str(raw.people, 2000000)) ? 2 : 1,
       vaultGeneration: typeof raw.vaultGeneration === 'string' && /^vault_[0-9a-f]{16}$/.test(raw.vaultGeneration) ? raw.vaultGeneration : '',
       prizes: (Array.isArray(raw.prizes) ? raw.prizes : []).map((p) => ({
         id: str(p && p.id, 64) || LW.uid('prize'),
@@ -277,6 +279,7 @@
     if (storageProblem) return '儲存的場次無法安全讀取，請先下載原始資料或還原備份';
     if (staleState || !freshStore()) return '另一個分頁已更新此場次，請重新整理後再抽獎';
     if (storageError) return '無法保存抽獎紀錄，請檢查瀏覽器的儲存權限或可用空間';
+    if (state.rosterKeyScheme === 1) return '舊版場次的姓名識別鍵發生衝突，請先匯出憑證包，再重設抽獎以建立新場次';
     if (!state.prizes.length) return '先到「獎池」新增獎項';
     if (allDrawn()) return '所有獎項都已抽出';
     const prize = currentPrize();
@@ -284,6 +287,8 @@
     if (!prize.name.trim()) return '請先為本輪獎項輸入名稱';
     if (remaining(prize) === 0) return `「${prizeLabel(prize)}」已經抽完，請改選其他獎項`;
     if (!people().length) return '先到「名單」加入抽獎人員';
+    const rosterIssue = LW.rosterIdentifierIssue(people());
+    if (rosterIssue) return `${rosterIssue}，請先修正名單再抽獎`;
     if (!candidates().length) return prize.eligibleGroup ? `「${prizeLabel(prize)}」的「${prize.eligibleGroup}」組已沒有符合規則的人` : '名單上已經沒有可以抽的人';
     if (state.settings.record && !LW.Recorder.supported()) {
       return '這個瀏覽器不能錄影：請改用最新版 Chrome、Edge 或 Safari，或到「設定」關閉自動錄影';
@@ -932,6 +937,9 @@
     add(!state.sample, state.sample ? '目前仍是範例資料' : '已使用正式資料');
     add(state.prizes.length > 0 && state.prizes.every((p) => p.name.trim() && p.qty > 0), '獎項名稱與名額完整');
     add(people().length > 0, `名單有 ${people().length} 人`);
+    add(state.rosterKeyScheme === 2, state.rosterKeyScheme === 2 ? '名單識別鍵不會互相衝突' : '舊版場次的姓名識別鍵有衝突；請先備份，再重設抽獎');
+    const rosterIssue = LW.rosterIdentifierIssue(people());
+    add(!rosterIssue, rosterIssue || '名單姓名、組別與識別鍵可完整保存');
     const duplicates = duplicateNames();
     add(!duplicates.length, duplicates.length ? `${duplicates.length} 個名字重複，請確認是否為不同的人` : '名單沒有完全相同的名字');
     for (const prize of state.prizes) {
@@ -1541,7 +1549,7 @@
     renderAll();
     try {
       clearTimeout(saveTimer);
-      const next = { ...state, records: [], session: newSession(), currentPrizeId: state.prizes[0]?.id || null };
+      const next = { ...state, records: [], rosterKeyScheme: 2, session: newSession(), currentPrizeId: state.prizes[0]?.id || null };
       await LW.DrawGate.run(state.session.id, async (assertLock) => {
         await assertLock();
         if (!freshStore()) throw new Error('另一個分頁已更新此場次，請重新整理後再重設');
@@ -1566,7 +1574,7 @@
     renderAll();
     try {
       clearTimeout(saveTimer);
-      const next = { ...state, title: '', prizes: [], people: '', records: [], currentPrizeId: null, session: newSession(), sample: false };
+      const next = { ...state, title: '', prizes: [], people: '', records: [], rosterKeyScheme: 2, currentPrizeId: null, session: newSession(), sample: false };
       await LW.DrawGate.run(state.session.id, async (assertLock) => {
         await assertLock();
         if (!freshStore()) throw new Error('另一個分頁已更新此場次，請重新整理後再清除範例');
