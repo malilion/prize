@@ -59,6 +59,21 @@ test('record search keeps large histories paged and pending winners hidden', () 
   assert.equal(LW.recordPage(records, { query: '秘密獎' }).items[0].status, 'pending');
 });
 
+test('fulfillment CSV includes only valid winners with original draw identities', () => {
+  const at = '2026-09-27T01:02:03.000Z';
+  const records = [
+    { seq: 1, prizeName: '獎品', prizeId: 'p1', name: '=危險公式', key: '甲#2', drawnAt: at, status: 'valid' },
+    { seq: 2, prizeName: '獎品', prizeId: 'p1', name: '乙', key: '乙', drawnAt: at, status: 'void' },
+    { seq: 3, prizeName: '獎品', prizeId: 'p1', name: '丙', key: '丙', drawnAt: at, status: 'aborted' },
+    { seq: 4, prizeName: '頭獎', prizeId: 'p2', name: '甲', key: '甲', drawnAt: at, status: 'valid' },
+  ];
+  const rows = LW.validWinnersRows(records, 'ABCD-EFGH');
+  assert.deepEqual(Array.from(rows.slice(1), (row) => row[0]), [1, 4]);
+  assert.deepEqual(Array.from(rows[1]), [1, '獎品', 'p1', '=危險公式', '甲#2', at, 'ABCD-EFGH']);
+  assert.match(LW.toCSV(rows), /'\=危險公式/);
+  assert.equal(LW.validWinnersRows([], 'ABCD-EFGH').length, 1);
+});
+
 test('draw shortcuts require a fresh key press outside editing and confirmation controls', () => {
   const target = { closest() { return null; } };
   const key = (value, extra = {}) => ({ key: value, target, ...extra });

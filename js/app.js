@@ -335,6 +335,7 @@
     recordsPrevious: $('#records-previous'),
     recordsNext: $('#records-next'),
     exportCsv: $('#export-csv'),
+    exportValid: $('#export-valid'),
     exportZip: $('#export-zip'),
     verify: $('#verify-video'),
     optTitle: $('#opt-title'),
@@ -699,7 +700,8 @@
     el.recordsSummary.textContent = state.records.length
       ? `${state.records.length} 抽・有效 ${valid}${voided ? `・作廢 ${voided}` : ''}${aborted ? `・中斷 ${aborted}` : ''}`
       : '尚無紀錄';
-    el.exportCsv.disabled = !state.records.length;
+    el.exportCsv.disabled = !state.records.length || busy();
+    el.exportValid.disabled = !valid || busy();
     el.exportZip.disabled = !state.records.length || busy() || zipping;
     el.verify.disabled = !readyVideos().length;
     renderExportReceipt();
@@ -1214,13 +1216,28 @@
   const eventSlug = () => LW.safeFilename(state.title.trim() || '抽獎', 30);
 
   function exportCSV() {
-    if (!state.records.length) return;
+    if (!state.records.length || busy()) return;
     if (storageProblem || staleState || !freshStore()) {
-      toast('場次資料已變更或無法安全讀取，請重新整理後再匯出中獎名單。', { tone: 'error' });
+      toast('場次資料已變更或無法安全讀取，請重新整理後再匯出完整抽次紀錄。', { tone: 'error' });
       return;
     }
     const blob = new Blob([LW.toCSV(csvRows())], { type: 'text/csv;charset=utf-8' });
-    LW.download(blob, `中獎名單_${eventSlug()}_${LW.fileStamp()}.csv`);
+    LW.download(blob, `完整抽次紀錄_${eventSlug()}_${LW.fileStamp()}.csv`);
+  }
+
+  function exportValidWinners() {
+    if (busy() || !state.records.some((record) => record.status === 'valid')) return;
+    if (storageProblem || staleState || !freshStore()) {
+      toast('場次資料已變更或無法安全讀取，請重新整理後再匯出有效得獎名單。', { tone: 'error' });
+      return;
+    }
+    try {
+      const csv = LW.toCSV(LW.validWinnersRows(state.records, state.session.id));
+      LW.download(new Blob([csv], { type: 'text/csv;charset=utf-8' }),
+        `有效得獎名單_${eventSlug()}_${LW.fileStamp()}.csv`);
+    } catch (err) {
+      toast(`有效得獎名單無法匯出：${err.message || err}`, { tone: 'error' });
+    }
   }
 
   function auditDraw(r, snap) {
@@ -2105,6 +2122,7 @@
     }
   });
   el.exportCsv.addEventListener('click', exportCSV);
+  el.exportValid.addEventListener('click', exportValidWinners);
   el.exportZip.addEventListener('click', () => exportPackage());
   $('#export-hash-copy').addEventListener('click', async () => {
     if (!exportReceipt || exportReceipt.sessionId !== state.session.id) return;

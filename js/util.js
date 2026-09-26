@@ -227,6 +227,16 @@
   /** UTF-8 with BOM + CRLF, so Excel on Windows and macOS opens Chinese text correctly. */
   const toCSV = (rows) => '﻿' + rows.map((row) => row.map(csvCell).join(',')).join('\r\n') + '\r\n';
 
+  function validWinnersRows(records, sessionId) {
+    const rows = [['抽次', '獎項', '獎項代碼', '得獎者', '參加者識別鍵', '抽出時間（UTC）', '場次代碼']];
+    for (const record of records) {
+      if (record.status !== 'valid') continue;
+      rows.push([record.seq, record.prizeName, record.prizeId, record.name, record.key,
+        new Date(record.drawnAt).toISOString(), sessionId]);
+    }
+    return rows;
+  }
+
   function parseCSV(text) {
     text = text.replace(/^\uFEFF/, '');
     const counts = { ',': 0, '\t': 0, ';': 0 };
@@ -391,7 +401,7 @@
     formatDateTime, formatTime, fileStamp, formatBytes, formatClock, shortHash,
     randomInt, randomFloat, sessionCode, uid,
     sha256Hex, sha256Sync,
-    toCSV, parseCSV, decodeText,
+    toCSV, validWinnersRows, parseCSV, decodeText,
     safeFilename, normalizeExportReceipt, exportReceiptText, recordPage, download,
     parseColor, rgba,
   });
