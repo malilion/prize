@@ -1100,50 +1100,56 @@
     el.exportZip.setAttribute('aria-busy', 'true');
     label.textContent = '打包中';
     try {
-      const now = new Date();
-      const folder = LW.safeFilename(`抽獎憑證包_${eventSlug()}_${LW.fileStamp(now)}`, 80);
-      const videos = [];
-      const sums = [];
-      const missing = [];
-      const missingSnapshots = [];
-      const draws = [];
-      for (const r of state.records) {
-        const snap = await LW.Vault.get(r.id);
-        draws.push(auditDraw(r, snap));
-        if (!snap || !snap.candidates) missingSnapshots.push(r.seq);
-        if (r.video && r.video.state === 'ready') {
-          const file = cleanVideoFile(r.video.file); // never let a stored name leave the ZIP folder
-          if (snap && snap.video) {
-            if (await LW.sha256Hex(snap.video) !== r.video.sha256) throw new Error(`第 ${r.seq} 抽的錄影與原始 SHA-256 不符`);
-            sums.push(`${r.video.sha256}  錄影/${file}`);
-            videos.push({ name: `${folder}/錄影/${file}`, data: snap.video, record: r });
-          } else missing.push(r);
+      await LW.DrawGate.run(state.session.id, async (assertLock) => {
+        await assertLock();
+        if (staleState || !freshStore()) throw new Error('另一個分頁已更新此場次，請重新整理後再匯出');
+        const now = new Date();
+        const folder = LW.safeFilename(`抽獎憑證包_${eventSlug()}_${LW.fileStamp(now)}`, 80);
+        const videos = [];
+        const sums = [];
+        const missing = [];
+        const missingSnapshots = [];
+        const draws = [];
+        for (const r of state.records) {
+          const snap = await LW.Vault.get(r.id);
+          draws.push(auditDraw(r, snap));
+          if (!snap || !snap.candidates) missingSnapshots.push(r.seq);
+          if (r.video && r.video.state === 'ready') {
+            const file = cleanVideoFile(r.video.file); // never let a stored name leave the ZIP folder
+            if (snap && snap.video) {
+              if (await LW.sha256Hex(snap.video) !== r.video.sha256) throw new Error(`第 ${r.seq} 抽的錄影與原始 SHA-256 不符`);
+              sums.push(`${r.video.sha256}  錄影/${file}`);
+              videos.push({ name: `${folder}/錄影/${file}`, data: snap.video, record: r });
+            } else missing.push(r);
+          }
         }
-      }
-      const entries = [
-        { name: `${folder}/中獎名單.csv`, data: LW.toCSV(csvRows()) },
-        { name: `${folder}/抽獎紀錄.json`, data: JSON.stringify(auditDoc(draws, now), null, 2) },
-        { name: `${folder}/場次狀態.json`, data: JSON.stringify({ format: 'lucky-wheel-session/1', exportedAt: now.toISOString(), state }, null, 2) },
-        { name: `${folder}/SHA256SUMS.txt`, data: sums.length ? `${sums.join('\n')}\n` : '' },
-        { name: `${folder}/驗證說明.txt`, data: readmeText(now, draws, missing) },
-        ...videos,
-      ];
-      const zip = await LW.makeZip(entries, {
-        date: now,
-        onProgress: (done, total) => { label.textContent = `打包中 ${Math.floor((done / Math.max(1, total)) * 100)}%`; },
+        const entries = [
+          { name: `${folder}/中獎名單.csv`, data: LW.toCSV(csvRows()) },
+          { name: `${folder}/抽獎紀錄.json`, data: JSON.stringify(auditDoc(draws, now), null, 2) },
+          { name: `${folder}/場次狀態.json`, data: JSON.stringify({ format: 'lucky-wheel-session/1', exportedAt: now.toISOString(), state }, null, 2) },
+          { name: `${folder}/SHA256SUMS.txt`, data: sums.length ? `${sums.join('\n')}\n` : '' },
+          { name: `${folder}/驗證說明.txt`, data: readmeText(now, draws, missing) },
+          ...videos,
+        ];
+        const zip = await LW.makeZip(entries, {
+          date: now,
+          onProgress: (done, total) => { label.textContent = `打包中 ${Math.floor((done / Math.max(1, total)) * 100)}%`; },
+        });
+        label.textContent = '計算整包指紋';
+        const packageHash = await LW.sha256Hex(zip);
+        await assertLock();
+        if (staleState || !freshStore()) throw new Error('打包期間另一個分頁更新了場次，請重新整理後重新匯出');
+        LW.download(zip, `${folder}.zip`);
+        $('#export-hash-value').textContent = packageHash;
+        $('#export-hash').hidden = false;
+        for (const v of videos) v.record.video.downloaded = true;
+        persist(true);
+        if (missing.length || missingSnapshots.length) {
+          toast(`憑證包已下載，但缺少 ${missing.length} 段錄影、${missingSnapshots.length} 份候選快照；這份備份無法通過完整驗證。`, { tone: 'error', timeout: 0 });
+        } else {
+          toast(`憑證包已下載（${LW.formatBytes(zip.size)}）`);
+        }
       });
-      label.textContent = '計算整包指紋';
-      const packageHash = await LW.sha256Hex(zip);
-      LW.download(zip, `${folder}.zip`);
-      $('#export-hash-value').textContent = packageHash;
-      $('#export-hash').hidden = false;
-      for (const v of videos) v.record.video.downloaded = true;
-      persist(true);
-      if (missing.length || missingSnapshots.length) {
-        toast(`憑證包已下載，但缺少 ${missing.length} 段錄影、${missingSnapshots.length} 份候選快照；這份備份無法通過完整驗證。`, { tone: 'error', timeout: 0 });
-      } else {
-        toast(`憑證包已下載（${LW.formatBytes(zip.size)}）`);
-      }
     } catch (err) {
       toast(`憑證包沒有匯出：${(err && err.message) || err}`, { tone: 'error', timeout: 0 });
     } finally {

@@ -49,7 +49,18 @@
 
   function openDB() {
     if (dbPromise) return dbPromise;
-    dbPromise = new Promise((resolve) => {
+    const opening = new Promise((resolve) => {
+      let settled = false;
+      let blockedTimer = null;
+      const finish = (db) => {
+        if (settled) {
+          if (db) db.close();
+          return;
+        }
+        settled = true;
+        if (blockedTimer) clearTimeout(blockedTimer);
+        resolve(db);
+      };
       try {
         const req = indexedDB.open(DB_NAME, 2);
         req.onupgradeneeded = () => {
@@ -57,18 +68,28 @@
           if (!req.result.objectStoreNames.contains(LOCK_STORE)) req.result.createObjectStore(LOCK_STORE, { keyPath: 'id' });
         };
         req.onsuccess = () => {
-          req.result.onversionchange = () => req.result.close();
-          resolve(req.result);
+          const db = req.result;
+          db.onversionchange = () => {
+            db.close();
+            if (dbPromise === result) {
+              dbPromise = null;
+              Vault.durable = false;
+            }
+          };
+          finish(db);
         };
-        req.onerror = () => resolve(null);
-        req.onblocked = () => resolve(null);
+        req.onerror = () => finish(null);
+        req.onblocked = () => { blockedTimer ||= setTimeout(() => finish(null), 3000); };
       } catch (_) {
-        resolve(null);
+        finish(null);
       }
-    }).then((db) => {
+    });
+    const result = opening.then((db) => {
       Vault.durable = !!db;
+      if (!db && dbPromise === result) dbPromise = null;
       return db;
     });
+    dbPromise = result;
     return dbPromise;
   }
 

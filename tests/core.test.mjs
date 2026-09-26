@@ -94,6 +94,73 @@ test('IndexedDB draw lease prevents a concurrent draw and releases afterward', a
   await gateContext.LW.DrawGate.run('SESSION', async (assertHeld) => { await assertHeld(); });
 });
 
+test('IndexedDB retries a failed open and reconnects after a version change', async () => {
+  let opens = 0;
+  const databases = [];
+  const gateContext = vm.createContext({
+    indexedDB: { open() {
+      opens++;
+      const request = {};
+      queueMicrotask(() => {
+        if (opens === 1) { request.onerror(); return; }
+        const db = { close() { this.closed = true; } };
+        databases.push(db);
+        request.result = db;
+        request.onsuccess();
+      });
+      return request;
+    } },
+  });
+  gateContext.globalThis = gateContext;
+  vm.runInContext(readFileSync(new URL('../js/store.js', import.meta.url), 'utf8'), gateContext);
+  const vault = gateContext.LW.Vault;
+  assert.equal(await vault.ready(), null);
+  assert.equal(vault.durable, false);
+  assert.equal(await vault.ready(), databases[0]);
+  assert.equal(vault.durable, true);
+  databases[0].onversionchange();
+  assert.equal(databases[0].closed, true);
+  assert.equal(vault.durable, false);
+  assert.equal(await vault.ready(), databases[1]);
+  assert.equal(vault.durable, true);
+  assert.equal(opens, 3);
+});
+
+test('blocked IndexedDB upgrade can be retried and closes a late connection', async () => {
+  let unblockTimer;
+  let firstRequest;
+  let opens = 0;
+  const latest = { close() { this.closed = true; } };
+  const gateContext = vm.createContext({
+    setTimeout(callback) { unblockTimer = callback; return 1; },
+    clearTimeout() {},
+    indexedDB: { open() {
+      opens++;
+      const request = {};
+      if (opens === 1) {
+        firstRequest = request;
+        queueMicrotask(() => request.onblocked());
+      } else {
+        queueMicrotask(() => { request.result = latest; request.onsuccess(); });
+      }
+      return request;
+    } },
+  });
+  gateContext.globalThis = gateContext;
+  vm.runInContext(readFileSync(new URL('../js/store.js', import.meta.url), 'utf8'), gateContext);
+  const first = gateContext.LW.Vault.ready();
+  await new Promise((resolve) => setImmediate(resolve));
+  unblockTimer();
+  assert.equal(await first, null);
+  assert.equal(await gateContext.LW.Vault.ready(), latest);
+  assert.equal(gateContext.LW.Vault.durable, true);
+  const late = { close() { this.closed = true; } };
+  firstRequest.result = late;
+  firstRequest.onsuccess();
+  assert.equal(late.closed, true);
+  assert.equal(gateContext.LW.Vault.durable, true);
+});
+
 test('SHA-256 matches Node across padding boundaries and large Blob chunks', async () => {
   for (const size of [0, 1, 55, 56, 63, 64, 65, 4097, 33 * 1024 * 1024 + 17]) {
     const bytes = randomBytes(size);
