@@ -243,13 +243,18 @@
 
   /* ----- derived data ----- */
 
-  let peopleCache = { text: null, scheme: null, list: [] };
+  let peopleCache = { text: null, scheme: null, list: [], ambiguous: new Set() };
   /** One entry per non-empty line. Repeated identities get an ordinal key. */
   function people() {
     if (peopleCache.text === state.people && peopleCache.scheme === state.rosterKeyScheme) return peopleCache.list;
     const list = state.rosterKeyScheme === 1 ? LW.parsePeopleLegacy(state.people) : LW.parsePeople(state.people);
-    peopleCache = { text: state.people, scheme: state.rosterKeyScheme, list };
+    peopleCache = { text: state.people, scheme: state.rosterKeyScheme, list, ambiguous: LW.ambiguousRosterNames(list) };
     return list;
+  }
+
+  function identityHint(record) {
+    people();
+    return peopleCache.ambiguous.has(record.name) ? record.key : '';
   }
 
   function duplicateNames() {
@@ -272,7 +277,8 @@
   const prizeLabel = (p) => (p.name || '').trim() || '未命名獎項';
   const allDrawn = () => state.prizes.length > 0 && state.prizes.every((p) => remaining(p) === 0);
   /** Valid winners of a prize, newest first. */
-  const winnersOf = (id) => state.records.filter((r) => r.prizeId === id && r.status === 'valid').map((r) => r.name).reverse();
+  const winnersOf = (id) => state.records.filter((r) => r.prizeId === id && r.status === 'valid')
+    .map((r) => identityHint(r) ? `${r.name} · ${r.key}` : r.name).reverse();
   const busy = () => phase === 'drawing' || phase === 'saving' || phase === 'rehearsal' || zipping || clearing || checking;
   const rosterLocked = () => state.records.length > 0;
   const readyVideos = () => state.records.filter((r) => r.video && r.video.state === 'ready');
@@ -488,7 +494,7 @@
     el.spinHint.classList.toggle('is-warning', !!blocker);
     const last = state.records[state.records.length - 1];
     el.stageText.textContent = phase === 'drawing' ? `第 ${last?.status === 'pending' ? last.seq : state.records.length + 1} 抽轉盤轉動中；結果完成後會公布。`
-      : (phase === 'saving' || phase === 'result') && last ? `第 ${last.seq} 抽，${last.prizeName}：${last.name}。錄影狀態：${last.video?.state === 'ready' ? '已儲存' : last.video?.state === 'failed' ? '失敗' : '處理中'}。`
+      : (phase === 'saving' || phase === 'result') && last ? `第 ${last.seq} 抽，${last.prizeName}：${last.name}${identityHint(last) ? `，識別鍵 ${last.key}` : ''}。錄影狀態：${last.video?.state === 'ready' ? '已儲存' : last.video?.state === 'failed' ? '失敗' : '處理中'}。`
         : phase === 'rehearsal' ? '預演中。這次不會寫入紀錄或占用名額。'
           : `本輪獎項：${currentPrize() ? prizeLabel(currentPrize()) : '未設定'}；目前可抽 ${candidates().length} 人。${blocker || ''}`;
 
@@ -661,7 +667,7 @@
         <span class="record__prize">${esc(r.prizeName)}</span>
         <time class="record__time" datetime="${esc(r.drawnAt)}" title="${esc(LW.formatDateTime(r.drawnAt))}">${LW.formatTime(r.drawnAt)}</time>
       </div>
-      <p class="record__name"><span class="record__who">${esc(r.name)}</span>${badge}</p>
+      <p class="record__name"><span class="record__who">${esc(r.name)}</span>${identityHint(r) ? `<span class="record__identity">識別鍵 ${esc(r.key)}</span>` : ''}${badge}</p>
       ${video}
       ${actions.length ? `<div class="record__actions">${actions.join('')}</div>` : ''}
     </li>`;
@@ -1011,11 +1017,11 @@
     stage.setView({
       prize: { name: record.prizeName, total: prize.qty, remaining: remaining(prize) },
       prizeWinners: winnersOf(prize.id),
-      readout: { label: '恭喜中獎', text: record.name, tone: 'winner' },
+      readout: { label: '恭喜中獎', text: record.name, detail: identityHint(record) ? `識別鍵 ${record.key}` : '', tone: 'winner' },
     });
     stage.celebrate();
     LW.Sound.fanfare();
-    announce(`第 ${seq} 抽，${record.prizeName}：${record.name}`);
+    announce(`第 ${seq} 抽，${record.prizeName}：${record.name}${identityHint(record) ? `，識別鍵 ${record.key}` : ''}`);
     phase = 'saving';
     renderAll();
 
@@ -1562,7 +1568,7 @@
         await LW.replaceSession(state, restored, incoming, { store: { save: (next) => saveSessionState(next, { allowRecovery: true }) } });
       });
       Object.assign(state, restored);
-      peopleCache = { text: null, list: [] };
+      peopleCache = { text: null, scheme: null, list: [], ambiguous: new Set() };
       fpKey = null;
       phase = 'idle';
       stage.clearResult();

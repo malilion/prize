@@ -58,6 +58,15 @@
     }
     return '';
   }
+  function ambiguousRosterNames(list) {
+    const seen = new Set();
+    const ambiguous = new Set();
+    for (const person of list) {
+      if (seen.has(person.name)) ambiguous.add(person.name);
+      else seen.add(person.name);
+    }
+    return ambiguous;
+  }
   function allowsRepeat(prize, settings) {
     const policy = prize?.repeatPolicy || 'inherit';
     return policy === 'allow' || (policy === 'inherit' && !!settings?.allowRepeat);
@@ -180,5 +189,5 @@
 
   const rosterLinesFromRows = (rows, isTable = false) => rosterImportFromRows(rows, isTable).lines;
 
-  Object.assign(LW, { parsePeople, parsePeopleLegacy, legacyRosterKeyCollision, rosterIdentifierIssue, allowsRepeat, eligiblePeople, exclusiveCapacity, drawOrderRisks, rosterImportIsTable, rosterImportFromRows, rosterLinesFromRows });
+  Object.assign(LW, { parsePeople, parsePeopleLegacy, legacyRosterKeyCollision, rosterIdentifierIssue, ambiguousRosterNames, allowsRepeat, eligiblePeople, exclusiveCapacity, drawOrderRisks, rosterImportIsTable, rosterImportFromRows, rosterLinesFromRows });
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -362,7 +362,8 @@
       if (term) {
         const matches = exactSequence ? record.seq === Number(exactSequence[1])
           : String(record.seq).includes(term) || String(record.prizeName || '').toLowerCase().includes(term) ||
-            (record.status !== 'pending' && String(record.name || '').toLowerCase().includes(term));
+            (record.status !== 'pending' && (String(record.name || '').toLowerCase().includes(term) ||
+              String(record.key || '').toLowerCase().includes(term)));
         if (!matches) continue;
       }
       if (total >= offset && items.length < size) items.push(record);

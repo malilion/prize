@@ -82,8 +82,11 @@ test('record search keeps large histories paged and pending winners hidden', () 
   assert.equal(named.total, 100);
   assert.equal(named.items.length, 50);
   assert.equal(LW.recordPage(records, { query: '#123' }).items[0].seq, 123);
-  records.push({ seq: 10001, prizeName: '秘密獎', name: '尚未公布的得獎者', status: 'pending' });
+  records[0].key = '甲#2';
+  assert.equal(LW.recordPage(records, { query: '甲#2' }).items[0].seq, 1);
+  records.push({ seq: 10001, prizeName: '秘密獎', name: '尚未公布的得獎者', key: '秘密識別鍵', status: 'pending' });
   assert.equal(LW.recordPage(records, { query: '尚未公布的得獎者' }).total, 0);
+  assert.equal(LW.recordPage(records, { query: '秘密識別鍵' }).total, 0);
   assert.equal(LW.recordPage(records, { query: '秘密獎' }).items[0].status, 'pending');
 });
 
@@ -542,6 +545,12 @@ test('duplicate roster keys cannot collide with literal suffixed names', () => {
   assert.match(LW.rosterIdentifierIssue(LW.parsePeople('甲'.repeat(201))), /姓名超過 200/);
   assert.match(LW.rosterIdentifierIssue(LW.parsePeople(`甲 | ${'組'.repeat(41)}`)), /組別超過 40/);
   assert.match(LW.rosterIdentifierIssue(LW.parsePeople(`${'甲'.repeat(190)} | ${'組'.repeat(30)}`)), /識別鍵超過 220/);
+});
+
+test('same-name entrants are identified across groups and literal suffixes', () => {
+  const roster = LW.parsePeople('甲 | 業務部\n甲 | 研發部\n乙\n甲 | 業務部\n甲#2');
+  assert.deepEqual([...LW.ambiguousRosterNames(roster)], ['甲']);
+  assert.equal(new Set(roster.map((person) => person.key)).size, roster.length);
 });
 
 test('preflight capacity combines exclusive prize demand by group and excludes held winners', () => {

@@ -584,6 +584,9 @@
           ctx.fill();
         }
         ctx.restore();
+        if (isWinner && readout.detail) {
+          this.text(readout.detail, x, 690, { size: 34, weight: 600, color: T.stageInk2, maxW: w, min: 24 });
+        }
       }
 
       const winners = v.prizeWinners || [];

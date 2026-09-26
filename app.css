@@ -442,6 +442,7 @@ input[type="range"] { width: 100%; margin: var(--space-xs) 0; accent-color: var(
 .record__time { flex: none; }
 .record__name { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2xs) var(--space-xs); }
 .record__who { font-size: var(--text-md); font-weight: 700; overflow-wrap: anywhere; min-width: 0; }
+.record__identity { color: var(--color-ink-3); font-size: var(--text-sm); overflow-wrap: anywhere; }
 .record.is-void .record__who { color: var(--color-ink-3); text-decoration: line-through; text-decoration-thickness: 2px; }
 .badge {
   display: inline-flex;
