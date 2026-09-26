@@ -47,6 +47,14 @@
       if (!draw || typeof draw !== 'object' || Array.isArray(draw)) throw new Error(`${tag}：抽獎紀錄格式不正確`);
       if (draw.video != null && (typeof draw.video !== 'object' || Array.isArray(draw.video) ||
         (draw.video.file != null && (typeof draw.video.file !== 'string' || !draw.video.file)))) throw new Error(`${tag}：錄影資料格式不正確`);
+      if (audit.format === 'lucky-wheel-audit/2' &&
+        (!Array.isArray(draw.candidateKeys) || typeof draw.winnerKey !== 'string' || !draw.winnerKey ||
+          !draw.eligibility || typeof draw.eligibility !== 'object' || Array.isArray(draw.eligibility) ||
+          typeof draw.eligibility.eligibleGroup !== 'string' ||
+          !['inherit', 'allow', 'exclude'].includes(draw.eligibility.repeatPolicy) ||
+          typeof draw.eligibility.allowRepeat !== 'boolean')) {
+        errors.push(`${tag}：缺少候選識別鍵或資格規則，無法驗證候選人資格`);
+      }
       const csvRow = csv[i + 1];
       const safeCell = (value) => /^[=+\-@\t\r]/.test(String(value)) ? `'${value}` : String(value);
       const statusLabel = { valid: '有效', void: '作廢', aborted: '中斷' }[draw.status];
@@ -101,8 +109,11 @@
         if (roster && (JSON.stringify(roster.map((p) => p.name)) !== JSON.stringify(audit.participants) || JSON.stringify(roster) !== JSON.stringify(audit.participantDetails))) errors.push('場次名單與稽核紀錄中的參加者不符');
         if (!Array.isArray(audit.prizes) || audit.prizes.length !== state.prizes.length || audit.prizes.some((p, i) => {
           const prize = state.prizes[i];
-          return !p || typeof p !== 'object' || p.id !== prize.id || p.name !== (prize.name.trim() || '未命名獎項') || p.quantity !== prize.qty || p.eligibleGroup !== (prize.eligibleGroup || '') || p.repeatPolicy !== (prize.repeatPolicy || 'inherit') || p.drawn !== state.records.filter((r) => r.prizeId === prize.id && r.status === 'valid').length;
+          const drawn = state.records.filter((r) => r.prizeId === prize.id && r.status === 'valid').length;
+          return !p || typeof p !== 'object' || p.id !== prize.id || p.name !== (prize.name.trim() || '未命名獎項') || p.quantity !== prize.qty || p.eligibleGroup !== (prize.eligibleGroup || '') || p.repeatPolicy !== (prize.repeatPolicy || 'inherit') || p.drawn !== drawn || !Number.isInteger(prize.qty) || prize.qty < 1 || prize.qty > 999 || drawn > prize.qty;
         })) errors.push('獎項清單與場次備份不符');
+        const prizeIds = new Set(state.prizes.map((prize) => prize.id));
+        if (state.records.some((record) => record.status === 'valid' && !prizeIds.has(record.prizeId))) errors.push('有效中獎紀錄指向不存在的獎項');
         for (const [i, r] of state.records.entries()) {
           const d = audit.draws[i];
           if (!d || typeof d !== 'object') throw new Error(`第 ${i + 1} 抽：抽獎紀錄格式不正確`);

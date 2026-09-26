@@ -1183,7 +1183,7 @@
         for (const r of state.records) {
           const snap = await LW.Vault.get(r.id);
           draws.push(auditDraw(r, snap));
-          if (!snap || !snap.candidates) missingSnapshots.push(r.seq);
+          if (!snap || !Array.isArray(snap.candidates) || !Array.isArray(snap.candidateKeys)) missingSnapshots.push(r.seq);
           if (r.video && r.video.state === 'ready') {
             const file = cleanVideoFile(r.video.file); // never let a stored name leave the ZIP folder
             if (snap && snap.video) {
@@ -1215,7 +1215,7 @@
         for (const v of videos) v.record.video.downloaded = true;
         persist(true);
         if (missing.length || missingSnapshots.length) {
-          toast(`憑證包已下載，但缺少 ${missing.length} 段錄影、${missingSnapshots.length} 份候選快照；這份備份無法通過完整驗證。`, { tone: 'error', timeout: 0 });
+          toast(`憑證包已下載，但缺少 ${missing.length} 段錄影、${missingSnapshots.length} 份候選名單或識別鍵快照；這份備份無法通過完整驗證。`, { tone: 'error', timeout: 0 });
         } else {
           toast(`憑證包已下載（${LW.formatBytes(zip.size)}）`);
         }

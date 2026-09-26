@@ -327,15 +327,17 @@ test('standalone inspector verifies candidate, winner, video, and restorable sta
   const record = { id: 'draw1', seq: 1, prizeId: 'p1', name: '甲', key: '甲 | 業務', index: 0, candidateCount: 1, candidatesHash: candidateHash, status: 'valid', prizeName: '獎品', drawnAt: '2026-09-27T00:00:00.000Z', rule, video: videoMeta };
   const draw = { id: 'draw1', seq: 1, winner: '甲', winnerKey: '甲 | 業務', winnerIndex: 0, candidateCount: 1, candidatesSha256: candidateHash, candidates: names, candidateKeys: ['甲 | 業務'], eligibility: rule, drawnAt: record.drawnAt, status: 'valid', prize: '獎品', video: { file: 'draw.webm', mimeType: 'video/webm', sha256: videoHash, bytes: video.size, durationMs: 1000 } };
   const state = { v: 1, title: '測試', session: { id: 'ABC', createdAt: '2026-09-27T00:00:00.000Z' }, people: roster, prizes: [{ id: 'p1', name: '獎品', qty: 1, eligibleGroup: '業務', repeatPolicy: 'exclude' }], records: [record], settings: { allowRepeat: false } };
-  async function archive(editedDraw = draw, includeVideo = true, editAudit = () => {}, editCsv = () => {}) {
+  async function archive(editedDraw = draw, includeVideo = true, editAudit = () => {}, editCsv = () => {}, editState = () => {}) {
     const audit = { format: 'lucky-wheel-audit/2', event: { title: '測試', sessionId: 'ABC', sessionCreatedAt: state.session.createdAt }, prizes: [{ id: 'p1', name: '獎品', quantity: 1, eligibleGroup: '業務', repeatPolicy: 'exclude', drawn: 1 }], participants: ['甲', '乙'], participantDetails: [{ name: '甲', group: '業務', key: '甲 | 業務' }, { name: '乙', group: '工程', key: '乙 | 工程' }], draws: [editedDraw] };
     editAudit(audit);
+    const savedState = JSON.parse(JSON.stringify(state));
+    editState(savedState);
     const csvRows = [[...LW.AUDIT_CSV_HEADER], ['1', '獎品', '甲', record.drawnAt, '有效', '', '1', candidateHash, 'draw.webm', videoHash, 'ABC']];
     editCsv(csvRows);
     return LW.makeZip([
       { name: '包/抽獎紀錄.json', data: JSON.stringify(audit) },
       { name: '包/中獎名單.csv', data: LW.toCSV(csvRows) },
-      { name: '包/場次狀態.json', data: JSON.stringify({ format: 'lucky-wheel-session/1', state }) },
+      { name: '包/場次狀態.json', data: JSON.stringify({ format: 'lucky-wheel-session/1', state: savedState }) },
       { name: '包/SHA256SUMS.txt', data: includeVideo ? `${videoHash}  錄影/draw.webm\n` : '' },
       ...(includeVideo ? [{ name: '包/錄影/draw.webm', data: video }] : []),
     ]);
@@ -365,6 +367,14 @@ test('standalone inspector verifies candidate, winner, video, and restorable sta
   await assert.rejects(LW.inspectPackage(await archive({ ...draw, video: { ...draw.video, file: 7 } })), /第 1 抽：錄影資料格式不正確/);
   const malformedKeys = await LW.inspectPackage(await archive({ ...draw, candidateKeys: 'bad' }));
   assert.ok(malformedKeys.errors.some((error) => error.includes('候選識別鍵')));
+  const missingKeys = await LW.inspectPackage(await archive({ ...draw, candidateKeys: null }));
+  assert.ok(missingKeys.errors.some((error) => error.includes('無法驗證候選人資格')));
+  const missingRule = await LW.inspectPackage(await archive({ ...draw, eligibility: null }));
+  assert.ok(missingRule.errors.some((error) => error.includes('無法驗證候選人資格')));
+  const invalidCapacity = await LW.inspectPackage(await archive(draw, true, (audit) => { audit.prizes[0].quantity = 0; }, () => {}, (savedState) => { savedState.prizes[0].qty = 0; }));
+  assert.ok(invalidCapacity.errors.some((error) => error.includes('獎項清單')));
+  const orphanWinner = await LW.inspectPackage(await archive(draw, true, (audit) => { audit.prizes = []; }, () => {}, (savedState) => { savedState.prizes = []; }));
+  assert.ok(orphanWinner.errors.some((error) => error.includes('不存在的獎項')));
   const emptyPrize = await LW.inspectPackage(await archive(draw, true, (audit) => { audit.prizes[0] = null; }));
   assert.ok(emptyPrize.errors.some((error) => error.includes('獎項清單')));
 });
