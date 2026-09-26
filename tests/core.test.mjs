@@ -33,12 +33,35 @@ test('export receipt binds a ZIP hash to its file and session', () => {
   assert.equal(LW.normalizeExportReceipt({ ...receipt, exportedAt: '2026-02-30T01:02:03.000Z' }, receipt.sessionId), null);
   const counted = LW.normalizeExportReceipt({ ...receipt, drawCounts: { total: 5, valid: 3, void: 1 } }, receipt.sessionId);
   assert.deepEqual({ ...counted.drawCounts }, { total: 5, valid: 3, void: 1 });
+  const current = LW.normalizeExportReceipt({ ...receipt, stateSha256: 'b'.repeat(64) }, receipt.sessionId);
+  assert.equal(current.stateSha256, 'b'.repeat(64));
+  assert.equal(LW.normalizeExportReceipt({ ...receipt, stateSha256: 'invalid' }, receipt.sessionId), null);
   assert.equal(LW.normalizeExportReceipt({ ...receipt, drawCounts: { total: 5, valid: 6, void: 0 } }, receipt.sessionId), null);
   assert.equal(LW.normalizeExportReceipt({ ...receipt, drawCounts: { total: -1, valid: 0, void: 0 } }, receipt.sessionId), null);
   assert.equal(LW.normalizeExportReceipt(receipt, receipt.sessionId).drawCounts, undefined);
   const text = LW.exportReceiptText(receipt);
   assert.match(text, /ZIP 檔名：抽獎憑證包\.zip/);
   assert.match(text, new RegExp(`ZIP SHA-256：${receipt.sha256}`));
+});
+
+test('receipt state hash ignores download bookkeeping but detects session changes', () => {
+  const state = { v: 1, title: '活動', people: '甲\n乙', session: { id: 'ABCD-EFGH' },
+    prizes: [{ id: 'p', name: '獎品', qty: 1 }], settings: { record: true },
+    records: [{ id: 'draw', status: 'valid', name: '甲', video: { state: 'ready', downloaded: false } }] };
+  const hash = LW.receiptStateHash(state);
+  assert.match(hash, /^[0-9a-f]{64}$/);
+  const reloaded = { records: [{ video: { downloaded: true, state: 'ready' }, returnToPool: false,
+    name: '甲', status: 'valid', id: 'draw' }], settings: { record: true },
+    prizes: [{ qty: 1, name: '獎品', id: 'p' }], session: { id: 'ABCD-EFGH' },
+    people: '甲\n乙', title: '活動', v: 1 };
+  assert.equal(LW.receiptStateHash(reloaded), hash);
+  for (const changed of [
+    { ...state, title: '新活動' },
+    { ...state, people: '甲\n丙' },
+    { ...state, prizes: [{ ...state.prizes[0], qty: 2 }] },
+    { ...state, settings: { record: false } },
+    { ...state, records: [{ ...state.records[0], status: 'void' }] },
+  ]) assert.notEqual(LW.receiptStateHash(changed), hash);
 });
 
 test('record search keeps large histories paged and pending winners hidden', () => {

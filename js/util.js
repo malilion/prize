@@ -297,6 +297,20 @@
     return (chars.length > max ? chars.slice(0, max).join('').trim() : cleaned) || '未命名';
   }
 
+  /** Stable across reloads and download flags, while covering the saved session content. */
+  function receiptStateHash(state) {
+    const canonical = JSON.stringify(state, (key, value) => {
+      if (key === 'downloaded' || (key === 'returnToPool' && value === false)) return undefined;
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const ordered = {};
+        for (const name of Object.keys(value).sort()) ordered[name] = value[name];
+        return ordered;
+      }
+      return value;
+    });
+    return sha256Sync(new TextEncoder().encode(canonical));
+  }
+
   function normalizeExportReceipt(value, sessionId) {
     if (typeof sessionId !== 'string' || !/^[^\u0000-\u001f\u007f]{1,16}$/.test(sessionId) ||
       !value || typeof value !== 'object' || value.sessionId !== sessionId ||
@@ -309,8 +323,11 @@
     if (counts != null && (!counts || typeof counts !== 'object' || Array.isArray(counts) ||
       !['total', 'valid', 'void'].every((key) => Number.isSafeInteger(counts[key]) && counts[key] >= 0) ||
       counts.valid + counts.void > counts.total)) return null;
+    if (value.stateSha256 != null && (typeof value.stateSha256 !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(value.stateSha256))) return null;
     return { sessionId, fileName: value.fileName, sha256: value.sha256, exportedAt: value.exportedAt,
-      ...(counts == null ? {} : { drawCounts: { total: counts.total, valid: counts.valid, void: counts.void } }) };
+      ...(counts == null ? {} : { drawCounts: { total: counts.total, valid: counts.valid, void: counts.void } }),
+      ...(value.stateSha256 == null ? {} : { stateSha256: value.stateSha256 }) };
   }
 
   function exportReceiptText(receipt) {
@@ -407,7 +424,7 @@
     randomInt, randomFloat, sessionCode, uid,
     sha256Hex, sha256Sync,
     toCSV, validWinnersRows, parseCSV, decodeText,
-    safeFilename, normalizeExportReceipt, exportReceiptText, recordPage, download,
+    safeFilename, receiptStateHash, normalizeExportReceipt, exportReceiptText, recordPage, download,
     parseColor, rgba,
   });
 })(typeof window !== 'undefined' ? window : globalThis);

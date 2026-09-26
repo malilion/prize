@@ -146,6 +146,8 @@
   const state = loadState(initialRead.status === 'ok' && LW.Store.validState(initialRead.value, VERSION) ? initialRead.value : null);
   let exportReceipt = LW.normalizeExportReceipt(LW.Store.getPref('lastExportReceipt', null), state.session.id);
   let exportReceiptSaved = !!exportReceipt;
+  let receiptHashDirty = true;
+  let currentReceiptHash = '';
   let recordsPageIndex = 0;
   let recordsViewSessionId = state.session.id;
   LW.Vault.setGeneration(state.vaultGeneration);
@@ -198,6 +200,7 @@
 
   function saveSessionState(next, { allowRecovery = false } = {}) {
     invalidatePreflight();
+    receiptHashDirty = true;
     if (storageProblem === 'unavailable' || (storageProblem && !allowRecovery)) return false;
     if (staleState || !freshStore()) {
       markStale();
@@ -213,6 +216,7 @@
 
   function persist(now = false) {
     invalidatePreflight();
+    receiptHashDirty = true;
     clearTimeout(saveTimer);
     const write = () => {
       if (storageProblem) return false;
@@ -710,6 +714,14 @@
     renderExportReceipt({ total: state.records.length, valid, void: voided });
   }
 
+  function currentReceiptStateHash() {
+    if (receiptHashDirty) {
+      currentReceiptHash = LW.receiptStateHash(state);
+      receiptHashDirty = false;
+    }
+    return currentReceiptHash;
+  }
+
   function renderExportReceipt(counts = null) {
     const visible = exportReceipt && exportReceipt.sessionId === state.session.id;
     $('#export-hash').hidden = !visible;
@@ -726,9 +738,19 @@
       void: state.records.filter((record) => record.status === 'void').length,
     };
     const saved = exportReceipt.drawCounts;
-    $('#export-receipt-unknown').hidden = !!saved;
-    $('#export-receipt-stale').hidden = !saved ||
-      (saved.total === current.total && saved.valid === current.valid && saved.void === current.void);
+    const drawsChanged = !!saved &&
+      (saved.total !== current.total || saved.valid !== current.valid || saved.void !== current.void);
+    let contentChanged = false;
+    if (exportReceipt.stateSha256) {
+      try { contentChanged = currentReceiptStateHash() !== exportReceipt.stateSha256; }
+      catch (_) { contentChanged = true; }
+    }
+    $('#export-receipt-unknown').hidden = !!exportReceipt.stateSha256 || drawsChanged;
+    const stale = $('#export-receipt-stale');
+    stale.hidden = !drawsChanged && !contentChanged && !staleState;
+    stale.textContent = staleState ? '另一個分頁已更新場次；請重新整理，並在公布指紋前重新匯出憑證包。'
+      : drawsChanged ? '這份 ZIP 匯出後，抽次或作廢狀態已有變動。請重新匯出憑證包，再公布新的指紋。'
+        : '這份 ZIP 匯出後，場次設定、名單或紀錄已有變動。請重新匯出憑證包，再公布新的指紋。';
   }
 
   /* ----- settings ----- */
@@ -1449,9 +1471,11 @@
         const packageHash = await LW.sha256Hex(zip);
         await assertLock();
         if (storageProblem || staleState || !freshStore()) throw new Error('打包期間場次資料已變更，請重新整理後重新匯出');
+        const stateSha256 = LW.receiptStateHash(state);
         const fileName = `${folder}.zip`;
         LW.download(zip, fileName);
         exportReceipt = LW.normalizeExportReceipt({ sessionId: state.session.id, fileName, sha256: packageHash, exportedAt: now.toISOString(),
+          stateSha256,
           drawCounts: {
             total: state.records.length,
             valid: state.records.filter((record) => record.status === 'valid').length,
@@ -1850,6 +1874,7 @@
       if (on && focus) tab.focus();
     }
     LW.Store.setPref('tab', name);
+    if (name === 'records') renderExportReceipt();
   }
 
   $('.tabs').addEventListener('click', (e) => {
