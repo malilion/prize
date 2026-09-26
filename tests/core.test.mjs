@@ -36,6 +36,29 @@ test('export receipt binds a ZIP hash to its file and session', () => {
   assert.match(text, new RegExp(`ZIP SHA-256：${receipt.sha256}`));
 });
 
+test('record search keeps large histories paged and pending winners hidden', () => {
+  const records = Array.from({ length: 10000 }, (_, index) => ({
+    seq: index + 1, prizeName: index % 2 ? '頭獎' : '普獎', name: index % 100 ? '乙' : '甲',
+    status: index % 10 ? 'valid' : 'void',
+  }));
+  const first = LW.recordPage(records);
+  assert.equal(first.total, 10000);
+  assert.equal(first.items.length, 50);
+  assert.equal(first.items[0].seq, 10000);
+  assert.equal(first.items.at(-1).seq, 9951);
+  assert.equal(first.hasNext, true);
+  const second = LW.recordPage(records, { page: 1 });
+  assert.equal(second.items[0].seq, 9950);
+  assert.equal(second.hasPrevious, true);
+  const named = LW.recordPage(records, { query: '甲', status: 'void' });
+  assert.equal(named.total, 100);
+  assert.equal(named.items.length, 50);
+  assert.equal(LW.recordPage(records, { query: '#123' }).items[0].seq, 123);
+  records.push({ seq: 10001, prizeName: '秘密獎', name: '尚未公布的得獎者', status: 'pending' });
+  assert.equal(LW.recordPage(records, { query: '尚未公布的得獎者' }).total, 0);
+  assert.equal(LW.recordPage(records, { query: '秘密獎' }).items[0].status, 'pending');
+});
+
 test('draw shortcuts require a fresh key press outside editing and confirmation controls', () => {
   const target = { closest() { return null; } };
   const key = (value, extra = {}) => ({ key: value, target, ...extra });

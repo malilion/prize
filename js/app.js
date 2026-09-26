@@ -6,6 +6,7 @@
   const PREROLL_MS = 1000;   // recording starts this long before the wheel moves
   const POSTROLL_MS = 3000;  // …and keeps rolling this long on the result
   const VERSION = 1;
+  const RECORD_PAGE_SIZE = 50;
   const MAX_PEOPLE_CHARS = 2000000;
   const MAX_IMPORT_BYTES = 32 * 1024 * 1024;
   const DEFAULT_SETTINGS = { spinSeconds: 8, record: true, autoDownload: true, sound: true, allowRepeat: false };
@@ -145,6 +146,8 @@
   const state = loadState(initialRead.status === 'ok' && LW.Store.validState(initialRead.value, VERSION) ? initialRead.value : null);
   let exportReceipt = LW.normalizeExportReceipt(LW.Store.getPref('lastExportReceipt', null), state.session.id);
   let exportReceiptSaved = !!exportReceipt;
+  let recordsPageIndex = 0;
+  let recordsViewSessionId = state.session.id;
   LW.Vault.setGeneration(state.vaultGeneration);
   let phase = 'idle'; // idle → drawing → saving → result → idle
   let zipping = false;
@@ -324,6 +327,13 @@
     optExclude: $('#opt-exclude'),
     records: $('#records'),
     recordsSummary: $('#records-summary'),
+    recordsSearch: $('#records-search'),
+    recordsStatus: $('#records-status'),
+    recordsPager: $('#records-pager'),
+    recordsPageSummary: $('#records-page-summary'),
+    recordsPageActions: $('#records-page-actions'),
+    recordsPrevious: $('#records-previous'),
+    recordsNext: $('#records-next'),
     exportCsv: $('#export-csv'),
     exportZip: $('#export-zip'),
     verify: $('#verify-video'),
@@ -648,12 +658,40 @@
   }
 
   function renderRecords() {
-    el.records.innerHTML = state.records.length
-      ? state.records.slice().reverse().map(recordItem).join('')
-      : `<li class="empty">
+    if (recordsViewSessionId !== state.session.id) {
+      recordsViewSessionId = state.session.id;
+      recordsPageIndex = 0;
+      el.recordsSearch.value = '';
+      el.recordsStatus.value = '';
+    }
+    let page = LW.recordPage(state.records, {
+      query: el.recordsSearch.value, status: el.recordsStatus.value,
+      page: recordsPageIndex, pageSize: RECORD_PAGE_SIZE,
+    });
+    if (!page.items.length && recordsPageIndex > 0) {
+      recordsPageIndex = Math.max(0, Math.ceil(page.total / RECORD_PAGE_SIZE) - 1);
+      page = LW.recordPage(state.records, {
+        query: el.recordsSearch.value, status: el.recordsStatus.value,
+        page: recordsPageIndex, pageSize: RECORD_PAGE_SIZE,
+      });
+    }
+    el.records.innerHTML = page.items.length ? page.items.map(recordItem).join('')
+      : state.records.length ? `<li class="empty">
+          <p class="empty__title">找不到符合的紀錄</p>
+          <p>試試其他姓名、獎項、抽次或狀態。</p>
+        </li>` : `<li class="empty">
           <p class="empty__title">還沒有中獎紀錄</p>
           <p>按下「開始抽獎」後，每一抽的結果和錄影都會出現在這裡，可以播放、下載或作廢。</p>
         </li>`;
+    el.recordsSearch.disabled = !state.records.length;
+    el.recordsStatus.disabled = !state.records.length;
+    el.recordsPager.hidden = !state.records.length;
+    el.recordsPageSummary.textContent = page.total
+      ? `顯示第 ${recordsPageIndex * RECORD_PAGE_SIZE + 1}–${recordsPageIndex * RECORD_PAGE_SIZE + page.items.length} 筆，共 ${page.total} 筆符合條件`
+      : '沒有符合條件的紀錄';
+    el.recordsPrevious.disabled = !page.hasPrevious;
+    el.recordsNext.disabled = !page.hasNext;
+    el.recordsPageActions.hidden = !page.hasPrevious && !page.hasNext;
     const count = (status) => state.records.filter((r) => r.status === status).length;
     const [valid, voided, aborted] = [count('valid'), count('void'), count('aborted')];
     el.recordsSummary.textContent = state.records.length
@@ -1974,6 +2012,15 @@
   });
 
   // records
+  el.recordsSearch.addEventListener('input', () => { recordsPageIndex = 0; renderRecords(); });
+  el.recordsStatus.addEventListener('change', () => { recordsPageIndex = 0; renderRecords(); });
+  el.recordsPrevious.addEventListener('click', () => {
+    if (recordsPageIndex > 0) { recordsPageIndex--; renderRecords(); }
+  });
+  el.recordsNext.addEventListener('click', () => {
+    recordsPageIndex++;
+    renderRecords();
+  });
   el.records.addEventListener('click', (e) => {
     const button = e.target.closest('button[data-act]');
     if (!button) return;

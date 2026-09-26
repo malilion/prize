@@ -310,6 +310,35 @@
     ].join('\r\n') + '\r\n';
   }
 
+  function recordPage(records, { query = '', status = '', page = 0, pageSize = 50 } = {}) {
+    const term = String(query).trim().toLowerCase();
+    const selectedStatus = ['valid', 'void', 'aborted'].includes(status) ? status : '';
+    const currentPage = Number.isSafeInteger(page) && page >= 0 ? page : 0;
+    const size = Number.isInteger(pageSize) && pageSize > 0 ? Math.min(pageSize, 100) : 50;
+    const offset = currentPage * size;
+    const exactSequence = /^#(\d+)$/.exec(term);
+    const items = [];
+    if (!term && !selectedStatus) {
+      for (let index = records.length - 1 - offset; index >= 0 && items.length < size; index--) items.push(records[index]);
+      return { items, total: records.length, page: currentPage, pageSize: size,
+        hasPrevious: currentPage > 0, hasNext: offset + size < records.length };
+    }
+    let total = 0;
+    for (let index = records.length - 1; index >= 0; index--) {
+      const record = records[index];
+      if (selectedStatus && record.status !== selectedStatus) continue;
+      if (term) {
+        const matches = exactSequence ? record.seq === Number(exactSequence[1])
+          : String(record.seq).includes(term) || String(record.prizeName || '').toLowerCase().includes(term) ||
+            (record.status !== 'pending' && String(record.name || '').toLowerCase().includes(term));
+        if (!matches) continue;
+      }
+      if (total >= offset && items.length < size) items.push(record);
+      total++;
+    }
+    return { items, total, page: currentPage, pageSize: size, hasPrevious: currentPage > 0, hasNext: offset + size < total };
+  }
+
   function download(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -363,7 +392,7 @@
     randomInt, randomFloat, sessionCode, uid,
     sha256Hex, sha256Sync,
     toCSV, parseCSV, decodeText,
-    safeFilename, normalizeExportReceipt, exportReceiptText, download,
+    safeFilename, normalizeExportReceipt, exportReceiptText, recordPage, download,
     parseColor, rgba,
   });
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -167,7 +167,18 @@
             <p class="pane__note is-warning" id="export-receipt-warning" hidden>瀏覽器無法保存這份收據；重新整理前請下載文字收據。</p>
           </div>
           <p class="pane__note"><a href="verify.html" target="_blank" rel="noopener">開啟獨立憑證驗證頁</a>，可在另一台電腦離線驗證 ZIP。</p>
+          <div class="record-filters">
+            <label class="field" for="records-search"><span class="field__label">查找紀錄</span><input class="input" id="records-search" type="search" placeholder="姓名、獎項或 #抽次" autocomplete="off"></label>
+            <label class="field" for="records-status"><span class="field__label">狀態</span><select class="input select" id="records-status"><option value="">全部</option><option value="valid">有效</option><option value="void">作廢</option><option value="aborted">中斷</option></select></label>
+          </div>
           <ol class="records" id="records"></ol>
+          <div class="record-pager" id="records-pager" hidden>
+            <p class="pane__meta" id="records-page-summary" aria-live="polite"></p>
+            <div class="row" id="records-page-actions">
+              <button class="btn btn--sm" id="records-previous" type="button">上一頁</button>
+              <button class="btn btn--sm" id="records-next" type="button">下一頁</button>
+            </div>
+          </div>
         </section>
 
         <section class="pane" id="pane-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
