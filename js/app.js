@@ -1269,8 +1269,10 @@
             <td>${esc(LW.formatDateTime(drawnAt))}</td><td class="print-sheet__signature"></td></tr>`).join('')}</tbody>
         </table>
         <p class="print-sheet__note">本表只供人工發獎核對；簽收不會寫回抽獎紀錄。若有作廢或重抽，請重新列印。</p>`;
+      document.body.classList.add('is-printing-winners');
       window.print();
     } catch (err) {
+      document.body.classList.remove('is-printing-winners');
       el.printSheet.replaceChildren();
       toast(`發獎核對表無法列印：${err.message || err}`, { tone: 'error' });
     }
@@ -2174,7 +2176,10 @@
   el.exportCsv.addEventListener('click', exportCSV);
   el.exportValid.addEventListener('click', exportValidWinners);
   el.printValid.addEventListener('click', printValidWinners);
-  window.addEventListener('afterprint', () => el.printSheet.replaceChildren());
+  window.addEventListener('afterprint', () => {
+    document.body.classList.remove('is-printing-winners');
+    el.printSheet.replaceChildren();
+  });
   el.exportZip.addEventListener('click', () => exportPackage());
   $('#export-hash-copy').addEventListener('click', async () => {
     if (!exportReceipt || exportReceipt.sessionId !== state.session.id) return;

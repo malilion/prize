@@ -549,9 +549,10 @@ input[type="range"] { width: 100%; margin: var(--space-xs) 0; accent-color: var(
 
 @media print {
   @page { margin: 12mm; }
-  html, body { overflow: visible; height: auto; min-height: 0; background: #fff; color: #111; }
-  body > :not(#print-sheet) { display: none !important; }
-  .print-sheet { display: block; font-size: 10pt; line-height: 1.35; }
+  html { overflow: visible; }
+  body.is-printing-winners { overflow: visible; height: auto; min-height: 0; background: #fff; color: #111; }
+  body.is-printing-winners > :not(#print-sheet) { display: none !important; }
+  body.is-printing-winners .print-sheet { display: block; font-size: 10pt; line-height: 1.35; }
   .print-sheet__head { margin-bottom: 8mm; }
   .print-sheet__head h1 { font-size: 18pt; margin-bottom: 2mm; }
   .print-sheet__head p, .print-sheet__note { font-size: 9pt; }
