@@ -1380,7 +1380,7 @@
     };
   }
 
-  function readmeText(now, draws, missing, snapshotIssues = []) {
+  function readmeText(now, draws, missing, snapshotIssues = [], oversizedText = []) {
     const count = (status) => state.records.filter((r) => r.status === status).length;
     const lines = [
       '抽獎憑證包　驗證說明',
@@ -1424,6 +1424,9 @@
       for (const issue of snapshotIssues.slice(0, 100)) lines.push(`  第 ${issue.seq} 抽：${issue.errors.join('；')}`);
       if (snapshotIssues.length > 100) lines.push(`  其餘 ${snapshotIssues.length - 100} 份請在獨立驗證頁逐抽檢查。`);
     }
+    if (oversizedText.length) {
+      lines.push('', `【注意】${oversizedText.join('、')} 超出內建獨立驗證頁的單檔讀取上限。原始資料仍在 ZIP 中，但這份憑證包無法用內建驗證頁完成檢查；請保留原始 ZIP 與整包指紋。`);
+    }
     return lines.join('\r\n') + '\r\n';
   }
 
@@ -1466,12 +1469,16 @@
             } else missing.push(r);
           }
         }
+        const textFiles = [
+          { name: '中獎名單.csv', data: LW.toCSV(csvRows()) },
+          { name: '抽獎紀錄.json', data: JSON.stringify(auditDoc(draws, now), null, 2) },
+          { name: '場次狀態.json', data: JSON.stringify({ format: 'lucky-wheel-session/1', exportedAt: now.toISOString(), state }, null, 2) },
+          { name: 'SHA256SUMS.txt', data: sums.length ? `${sums.join('\n')}\n` : '' },
+        ];
+        const oversizedText = LW.archiveTextLimitIssues(textFiles);
         const entries = [
-          { name: `${folder}/中獎名單.csv`, data: LW.toCSV(csvRows()) },
-          { name: `${folder}/抽獎紀錄.json`, data: JSON.stringify(auditDoc(draws, now), null, 2) },
-          { name: `${folder}/場次狀態.json`, data: JSON.stringify({ format: 'lucky-wheel-session/1', exportedAt: now.toISOString(), state }, null, 2) },
-          { name: `${folder}/SHA256SUMS.txt`, data: sums.length ? `${sums.join('\n')}\n` : '' },
-          { name: `${folder}/驗證說明.txt`, data: readmeText(now, draws, missing, snapshotIssues) },
+          ...textFiles.map((file) => ({ name: `${folder}/${file.name}`, data: file.data })),
+          { name: `${folder}/驗證說明.txt`, data: readmeText(now, draws, missing, snapshotIssues, oversizedText) },
           ...videos,
         ];
         const zip = await LW.makeZip(entries, {
@@ -1495,10 +1502,11 @@
         exportReceiptSaved = LW.Store.setPref('lastExportReceipt', exportReceipt);
         for (const v of videos) v.record.video.downloaded = true;
         persist(true);
-        if (missing.length || snapshotIssues.length || !exportReceiptSaved) {
+        if (missing.length || snapshotIssues.length || oversizedText.length || !exportReceiptSaved) {
           const evidenceProblems = [
             missing.length ? `${missing.length} 段錄影未包含` : '',
             snapshotIssues.length ? `${snapshotIssues.length} 份候選快照異常` : '',
+            oversizedText.length ? `${oversizedText.join('、')} 超過內建驗證頁的讀取上限` : '',
           ].filter(Boolean);
           const incomplete = evidenceProblems.length
             ? `${evidenceProblems.join('、')}；這份備份無法通過完整驗證` : '';

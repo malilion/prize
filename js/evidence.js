@@ -4,6 +4,16 @@
   const LW = (root.LW = root.LW || {});
   const decoder = new TextDecoder('utf-8', { fatal: true });
   const hex = (s) => typeof s === 'string' && /^[0-9a-f]{64}$/.test(s);
+  const MAX_TEXT_BYTES = Object.freeze({
+    '抽獎紀錄.json': 64 * 1024 * 1024,
+    '場次狀態.json': 16 * 1024 * 1024,
+    '中獎名單.csv': 16 * 1024 * 1024,
+    'SHA256SUMS.txt': 8 * 1024 * 1024,
+  });
+  function archiveTextLimitIssues(entries) {
+    return entries.filter(({ name, data }) => MAX_TEXT_BYTES[name] &&
+      new Blob([data]).size > MAX_TEXT_BYTES[name]).map(({ name }) => name);
+  }
   const AUDIT_CSV_HEADER = Object.freeze(['序號', '獎項', '中獎者', '抽出時間（UTC）', '狀態', '備註', '候選人數', '名單指紋（SHA-256）', '錄影檔名', '錄影 SHA-256', '場次代碼']);
   const LEGACY_CSV_HEADER = [...AUDIT_CSV_HEADER];
   LEGACY_CSV_HEADER[3] = '抽出時間';
@@ -82,7 +92,9 @@
     const prefix = `${roots[0]}/`;
     const readText = async (name) => {
       const file = files.get(prefix + name);
-      if (!file || file.size > 8 * 1024 * 1024) throw new Error(`缺少或過大的 ${name}`);
+      // Candidate names and keys repeat in every draw. A normal event can produce an
+      // audit larger than 8 MiB while the actual saved session remains small.
+      if (!file || file.size > MAX_TEXT_BYTES[name]) throw new Error(`缺少或過大的 ${name}`);
       return decoder.decode(await file.arrayBuffer());
     };
     const audit = JSON.parse(await readText('抽獎紀錄.json'));
@@ -226,5 +238,5 @@
     return { files, prefix, audit, state, snapshots, errors, warnings };
   }
 
-  Object.assign(LW, { inspectPackage, inspectDrawEvidence, formatVerificationReport, AUDIT_CSV_HEADER });
+  Object.assign(LW, { inspectPackage, inspectDrawEvidence, archiveTextLimitIssues, formatVerificationReport, AUDIT_CSV_HEADER });
 })(typeof window !== 'undefined' ? window : globalThis);

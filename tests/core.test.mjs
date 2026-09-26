@@ -772,6 +772,60 @@ test('a backup before the first draw can be inspected and restored', async () =>
   assert.equal(report.state.session.id, 'EMPTY');
 });
 
+test('a valid archive with an audit larger than 8 MiB remains independently verifiable', async () => {
+  const rosterText = Array.from({ length: 5000 }, (_, index) => `參加者${String(index).padStart(5, '0')}_${'A'.repeat(45)}`).join('\n');
+  const roster = LW.parsePeople(rosterText);
+  const names = roster.map((person) => person.name);
+  const keys = roster.map((person) => person.key);
+  const candidatesHash = await LW.sha256Hex(names.join('\n'));
+  const rule = { eligibleGroup: '', repeatPolicy: 'allow', allowRepeat: true, voidNoReturnExcluded: true };
+  const prize = { id: 'p', name: '紀念獎', qty: 20, eligibleGroup: '', repeatPolicy: 'allow' };
+  const createdAt = '2026-09-27T00:00:00.000Z';
+  const records = Array.from({ length: 20 }, (_, index) => ({
+    id: `draw-${index + 1}`, seq: index + 1, prizeId: 'p', prizeName: '紀念獎',
+    name: names[0], key: keys[0], index: 0, candidateCount: names.length, candidatesHash,
+    drawnAt: new Date(Date.parse(createdAt) + (index + 1) * 1000).toISOString(),
+    status: 'valid', rule, video: { state: 'none' },
+  }));
+  const state = { v: 1, title: '大型活動', session: { id: 'LARGE', createdAt },
+    rosterKeyScheme: 2, people: rosterText, prizes: [prize], records, settings: { allowRepeat: false } };
+  const audit = { format: 'lucky-wheel-audit/2',
+    event: { title: state.title, sessionId: state.session.id, sessionCreatedAt: createdAt },
+    prizes: [{ id: 'p', name: '紀念獎', quantity: 20, eligibleGroup: '', repeatPolicy: 'allow', drawn: 20 }],
+    participants: names, participantDetails: roster,
+    draws: records.map((record) => ({
+      id: record.id, seq: record.seq, drawnAt: record.drawnAt, prize: record.prizeName,
+      winner: record.name, winnerKey: record.key, winnerIndex: record.index,
+      candidateCount: record.candidateCount, candidatesSha256: record.candidatesHash,
+      candidates: names, candidateKeys: keys, eligibility: rule, status: 'valid', video: { state: 'none' },
+    })),
+  };
+  const auditText = JSON.stringify(audit);
+  assert.ok(new TextEncoder().encode(auditText).length > 8 * 1024 * 1024);
+  const csv = LW.toCSV([[...LW.AUDIT_CSV_HEADER], ...records.map((record) => [
+    record.seq, record.prizeName, record.name, record.drawnAt, '有效', '',
+    record.candidateCount, record.candidatesHash, '', '', state.session.id,
+  ])]);
+  const zip = await LW.makeZip([
+    { name: '包/抽獎紀錄.json', data: auditText },
+    { name: '包/中獎名單.csv', data: csv },
+    { name: '包/場次狀態.json', data: JSON.stringify({ format: 'lucky-wheel-session/1', state }) },
+    { name: '包/SHA256SUMS.txt', data: '' },
+  ]);
+  const report = await LW.inspectPackage(zip);
+  assert.deepEqual(Array.from(report.errors), []);
+  assert.equal(report.state.records.length, 20);
+});
+
+test('archive export reports text files too large for the built-in verifier', () => {
+  const oversized = 'x'.repeat(16 * 1024 * 1024 + 1);
+  assert.deepEqual(Array.from(LW.archiveTextLimitIssues([
+    { name: '抽獎紀錄.json', data: oversized },
+    { name: '場次狀態.json', data: oversized },
+    { name: '中獎名單.csv', data: '序號,獎項\r\n' },
+  ])), ['場次狀態.json']);
+});
+
 test('legacy colliding roster keys remain restorable with an explicit fairness warning', async () => {
   const rosterText = '甲\n甲\n甲#2';
   const roster = LW.parsePeopleLegacy(rosterText);
