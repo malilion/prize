@@ -802,10 +802,10 @@
 
     let recorder = null;
     let record = null;
-    let snapshotSaved = Promise.resolve();
+    let drawId = null;
+    let pendingSaved = false;
     try {
       const fingerprint = await LW.sha256Hex(names.join('\n'));
-      const index = LW.randomInt(pool.length);
       stage.setView({
         title: state.title.trim(),
         drawNo: seq,
@@ -816,6 +816,12 @@
         prizeWinners: winnersOf(prize.id),
         readout: { label: '準備開始', text: null, tone: 'normal' },
       });
+      drawId = LW.uid('draw');
+      try {
+        await LW.Vault.put({ id: drawId, candidates: names, candidateKeys: pool.map((p) => p.key), video: null });
+      } catch (err) {
+        throw Object.assign(new Error(`候選名單快照無法保存（${err.message || err}），這一抽沒有進行。`), { beforeDraw: true });
+      }
       if (state.settings.record) {
         try {
           recorder = LW.Recorder.start(el.canvas, { audioTrack: LW.Sound.track() });
@@ -828,9 +834,10 @@
 
       // The result is fixed now, so it goes on file before the wheel moves: if the page dies
       // mid-spin, this draw survives as "中斷" instead of silently disappearing.
+      const index = LW.randomInt(pool.length);
       const winner = pool[index];
       record = {
-        id: LW.uid('draw'),
+        id: drawId,
         seq,
         prizeId: prize.id,
         prizeName: prizeLabel(prize),
@@ -851,8 +858,7 @@
         record = null;
         throw Object.assign(new Error('無法保存這一抽的預定結果，抽獎沒有開始。請檢查瀏覽器的儲存權限或可用空間。'), { beforeDraw: true });
       }
-      snapshotSaved = LW.Vault.put({ id: record.id, candidates: names, candidateKeys: pool.map((p) => p.key), video: null });
-      await snapshotSaved;
+      pendingSaved = true;
 
       await LW.wait(PREROLL_MS);
       stage.setView({ readout: { label: '轉動中', text: null, tone: 'normal' } });
@@ -863,11 +869,14 @@
       stage.setRecording(null);
       const why = (err && err.message) || String(err);
       if (err?.lockLost) staleState = true;
-      if (record && !err?.lockLost) {
+      if (pendingSaved && record && !err?.lockLost) {
         record.status = 'aborted';
         record.abortReason = why;
         record.video = recorder ? { state: 'failed', error: '抽獎中斷，錄影未完成' } : { state: 'none' };
         persist(true);
+      }
+      if (!pendingSaved && drawId) {
+        try { await LW.Vault.removeSession(state.vaultGeneration, [{ id: drawId }]); } catch (_) { /* orphaned evidence is harmless */ }
       }
       phase = 'idle';
       renderAll();
@@ -917,7 +926,7 @@
 
     if (recorder) {
       await LW.wait(POSTROLL_MS);
-      await finishRecording(record, recorder, snapshotSaved);
+      await finishRecording(record, recorder);
     }
     phase = 'result';
     ensureCurrentPrize();
@@ -1050,7 +1059,7 @@
     }
   }
 
-  async function finishRecording(record, recorder, snapshotSaved) {
+  async function finishRecording(record, recorder) {
     stage.setRecording(null);
     try {
       const out = await recorder.stop();
@@ -1065,7 +1074,6 @@
         durationMs: Math.round(out.durationMs),
         downloaded: false,
       };
-      await snapshotSaved;
       await LW.Vault.update(record.id, { video: out.blob, videoMeta: { ...record.video } });
       if (state.settings.autoDownload) {
         LW.download(out.blob, file);
