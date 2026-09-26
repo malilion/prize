@@ -336,6 +336,8 @@
     recordsNext: $('#records-next'),
     exportCsv: $('#export-csv'),
     exportValid: $('#export-valid'),
+    printValid: $('#print-valid'),
+    printSheet: $('#print-sheet'),
     exportZip: $('#export-zip'),
     verify: $('#verify-video'),
     optTitle: $('#opt-title'),
@@ -702,6 +704,7 @@
       : '尚無紀錄';
     el.exportCsv.disabled = !state.records.length || busy();
     el.exportValid.disabled = !valid || busy();
+    el.printValid.disabled = !valid || busy();
     el.exportZip.disabled = !state.records.length || busy() || zipping;
     el.verify.disabled = !readyVideos().length;
     renderExportReceipt();
@@ -1243,6 +1246,33 @@
         `有效得獎名單_${eventSlug()}_${LW.fileStamp()}.csv`);
     } catch (err) {
       toast(`有效得獎名單無法匯出：${err.message || err}`, { tone: 'error' });
+    }
+  }
+
+  function printValidWinners() {
+    if (busy() || !state.records.some((record) => record.status === 'valid')) return;
+    if (storageProblem || staleState || !freshStore()) {
+      toast('場次資料已變更或無法安全讀取，請重新整理後再列印發獎核對表。', { tone: 'error' });
+      return;
+    }
+    try {
+      const rows = LW.validWinnersRows(state.records, state.session.id).slice(1);
+      el.printSheet.innerHTML = `
+        <header class="print-sheet__head">
+          <h1>${esc(state.title.trim() || '抽獎')}・發獎核對表</h1>
+          <p>場次 ${esc(state.session.id)}　有效得獎 ${rows.length} 筆　列印時間 ${esc(LW.formatDateTime(new Date()))}（本機時間）</p>
+        </header>
+        <table class="print-sheet__table">
+          <thead><tr><th scope="col">抽次</th><th scope="col">獎項</th><th scope="col">得獎者／識別鍵</th><th scope="col">抽出時間（本機）</th><th scope="col">領取簽名</th></tr></thead>
+          <tbody>${rows.map(([seq, prize, , name, key, drawnAt]) => `
+            <tr><td>#${esc(seq)}</td><td>${esc(prize)}</td><td><strong>${esc(name)}</strong><small>${esc(key)}</small></td>
+            <td>${esc(LW.formatDateTime(drawnAt))}</td><td class="print-sheet__signature"></td></tr>`).join('')}</tbody>
+        </table>
+        <p class="print-sheet__note">本表只供人工發獎核對；簽收不會寫回抽獎紀錄。若有作廢或重抽，請重新列印。</p>`;
+      window.print();
+    } catch (err) {
+      el.printSheet.replaceChildren();
+      toast(`發獎核對表無法列印：${err.message || err}`, { tone: 'error' });
     }
   }
 
@@ -2143,6 +2173,8 @@
   });
   el.exportCsv.addEventListener('click', exportCSV);
   el.exportValid.addEventListener('click', exportValidWinners);
+  el.printValid.addEventListener('click', printValidWinners);
+  window.addEventListener('afterprint', () => el.printSheet.replaceChildren());
   el.exportZip.addEventListener('click', () => exportPackage());
   $('#export-hash-copy').addEventListener('click', async () => {
     if (!exportReceipt || exportReceipt.sessionId !== state.session.id) return;

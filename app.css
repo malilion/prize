@@ -543,6 +543,32 @@ input[type="range"] { width: 100%; margin: var(--space-xs) 0; accent-color: var(
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
 @keyframes toast-out { to { opacity: 0; transform: translateY(8px); } }
 
+/* ---------- paper fulfillment list ---------- */
+
+.print-sheet { display: none; }
+
+@media print {
+  @page { margin: 12mm; }
+  html, body { overflow: visible; height: auto; min-height: 0; background: #fff; color: #111; }
+  body > :not(#print-sheet) { display: none !important; }
+  .print-sheet { display: block; font-size: 10pt; line-height: 1.35; }
+  .print-sheet__head { margin-bottom: 8mm; }
+  .print-sheet__head h1 { font-size: 18pt; margin-bottom: 2mm; }
+  .print-sheet__head p, .print-sheet__note { font-size: 9pt; }
+  .print-sheet__table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .print-sheet__table thead { display: table-header-group; }
+  .print-sheet__table tr { break-inside: avoid; }
+  .print-sheet__table th, .print-sheet__table td { border: 1px solid #555; padding: 2.5mm 2mm; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+  .print-sheet__table th:nth-child(1) { width: 9%; }
+  .print-sheet__table th:nth-child(2) { width: 23%; }
+  .print-sheet__table th:nth-child(3) { width: 30%; }
+  .print-sheet__table th:nth-child(4) { width: 23%; }
+  .print-sheet__table th:nth-child(5) { width: 15%; }
+  .print-sheet__table small { display: block; margin-top: 1mm; font-size: 8pt; }
+  .print-sheet__signature { height: 13mm; }
+  .print-sheet__note { margin-top: 5mm; }
+}
+
 /* ---------- input capability & preferences ---------- */
 
 @media (pointer: coarse) {

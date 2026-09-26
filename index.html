@@ -148,6 +148,7 @@
             <button class="btn" id="export-valid" type="button">
               <svg class="icon" aria-hidden="true"><use href="#i-table"/></svg>匯出有效得獎名單
             </button>
+            <button class="btn" id="print-valid" type="button">列印發獎核對表</button>
             <button class="btn" id="export-zip" type="button">
               <span class="spinner" aria-hidden="true"></span>
               <svg class="icon" aria-hidden="true"><use href="#i-archive"/></svg><span class="btn__label">匯出憑證包</span>
@@ -156,7 +157,7 @@
               <svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg>驗證錄影檔
             </button>
           </div>
-          <p class="pane__note">完整抽次紀錄 CSV 保留作廢與中斷抽次；有效得獎名單 CSV 只供發獎對照。憑證包 ZIP 內含完整紀錄、候選名單、可取得的錄影與 SHA-256 雜湊值。</p>
+          <p class="pane__note">完整抽次紀錄 CSV 保留作廢與中斷抽次；有效得獎名單 CSV 與發獎核對表只列目前有效的得獎者。紙本簽收不會寫回抽獎紀錄，作廢後請重新列印。憑證包 ZIP 內含完整紀錄、候選名單、可取得的錄影與 SHA-256 雜湊值。</p>
           <div class="export-receipt" id="export-hash" hidden>
             <p class="export-receipt__title">最近一次匯出的 ZIP</p>
             <p class="pane__note"><span id="export-file-name"></span> · <time id="export-time"></time></p>
@@ -241,6 +242,8 @@
       </div>
     </aside>
   </div>
+
+  <section class="print-sheet" id="print-sheet" aria-label="發獎核對表"></section>
 
   <dialog class="dialog" id="dlg-void" aria-labelledby="dlg-void-title">
     <form method="dialog" class="dialog__body">
