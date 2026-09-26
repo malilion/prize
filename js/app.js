@@ -348,12 +348,14 @@
   stage.onTick = () => LW.Sound.tick();
   let projectionWindow = null;
   stage.onFrame = (canvas, view) => {
-    if (!projectionWindow || projectionWindow.closed) return;
+    if (!projectionWindow) return;
+    if (projectionWindow.closed) { projectionWindow = null; return; }
     try {
       const doc = projectionWindow.document;
       const mirror = doc.getElementById('projection-canvas');
       if (!mirror) return;
       mirror.getContext('2d', { alpha: false }).drawImage(canvas, 0, 0);
+      mirror.dataset.lastFrameAt = String(Date.now());
       const status = doc.getElementById('projection-status');
       const next = `${view.prize ? view.prize.name : '尚無獎項'} · ${view.readout?.text || view.readout?.label || ''}`;
       if (status && status.textContent !== next) status.textContent = next;
@@ -1687,6 +1689,16 @@
     projectionWindow = window.open('projection.html', 'lucky-wheel-projection', 'popup,width=1280,height=720');
     if (!projectionWindow) toast('瀏覽器阻擋了投影視窗，請允許這個網站開啟彈出視窗。', { tone: 'error' });
     else stage.setView({});
+  });
+  window.addEventListener('message', (event) => {
+    if (event.data?.type !== 'lucky-wheel-projection-ready' || !event.source ||
+      (location.protocol !== 'file:' && event.origin !== location.origin)) return;
+    try {
+      const expected = new URL('projection.html', document.baseURI).href;
+      if (event.source.location.href !== expected || !event.source.document.getElementById('projection-canvas')) return;
+      projectionWindow = event.source;
+      stage.setView({});
+    } catch (_) { /* only a same-origin projection window can reconnect */ }
   });
   document.addEventListener('fullscreenchange', () => {
     if (!document.fullscreenElement && el.app.classList.contains('is-presenting')) setPresenting(false);

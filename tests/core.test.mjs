@@ -314,6 +314,51 @@ test('large rosters use bounded wheel paint while retaining every candidate inde
   assert.equal(await spin, winnerIndex);
 });
 
+test('projection requests reconnection and marks a stale mirrored frame', () => {
+  let now = 10000;
+  let tick;
+  const messages = [];
+  const events = new Map();
+  const canvas = { dataset: { lastFrameAt: '9000' } };
+  let disconnected = false;
+  const status = { textContent: '已連線', parentElement: { classList: {
+    toggle(name, active) { assert.equal(name, 'is-disconnected'); disconnected = active; },
+  } } };
+  const opener = { closed: false, postMessage(data, target) { messages.push({ data, target }); } };
+  const projectionContext = vm.createContext({
+    Date: { now: () => now },
+    location: { protocol: 'https:', origin: 'https://example.test' },
+    setInterval(callback, delay) { assert.equal(delay, 2000); tick = callback; },
+    window: { opener, addEventListener(name, callback) { events.set(name, callback); } },
+    document: { getElementById(id) {
+      return id === 'projection-canvas' ? canvas : id === 'projection-status' ? status : { addEventListener() {} };
+    } },
+  });
+  vm.runInContext(readFileSync(new URL('../js/projection.js', import.meta.url), 'utf8'), projectionContext);
+  assert.equal(messages[0].data.type, 'lucky-wheel-projection-ready');
+  assert.equal(messages[0].target, 'https://example.test');
+  tick();
+  assert.equal(status.textContent, '已連線');
+  assert.equal(disconnected, false);
+  now = 16000;
+  tick();
+  assert.equal(status.textContent, '等待操作台重新連線…');
+  assert.equal(disconnected, true);
+  canvas.dataset.lastFrameAt = '16000';
+  tick();
+  assert.equal(disconnected, false);
+  const beforeFocus = messages.length;
+  events.get('focus')();
+  assert.equal(messages.length, beforeFocus + 1);
+  projectionContext.location.protocol = 'file:';
+  events.get('pageshow')();
+  assert.equal(messages.at(-1).target, '*');
+  opener.closed = true;
+  const count = messages.length;
+  tick();
+  assert.equal(messages.length, count);
+});
+
 test('eligibility applies group and per-prize repeat rules', () => {
   const people = LW.parsePeople('甲 | 業務\n乙 | 工程\n甲 | 業務');
   assert.equal(people[2].key, '甲 | 業務#2');
