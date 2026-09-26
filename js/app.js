@@ -1045,17 +1045,24 @@
     renderSettings();
     add(canSave, '場次設定可寫入瀏覽器');
     const snapshotIssues = [];
-    let missingVideos = 0;
+    const videoIssues = [];
     for (const [index, record] of state.records.entries()) {
-      if (index % 25 === 0) $('#preflight-results').textContent = `正在查核既有抽次 ${index + 1}/${state.records.length}…`;
+      $('#preflight-results').textContent = `正在查核既有抽次 ${index + 1}/${state.records.length}…`;
       const saved = await LW.Vault.get(record.id);
       const evidence = await LW.inspectDrawEvidence(record, saved, { allowDuplicateKeys: state.rosterKeyScheme === 1 });
       if (evidence.errors.length) snapshotIssues.push(`第 ${record.seq} 抽：${evidence.errors.join('、')}`);
-      if (record.video?.state === 'ready' && !saved?.video) missingVideos++;
+      if (record.video?.state === 'ready') {
+        try {
+          if (!await LW.verifiedVideo(saved, record.video)) videoIssues.push(`第 ${record.seq} 抽：錄影已遺失`);
+        } catch (err) {
+          videoIssues.push(`第 ${record.seq} 抽：${err.message || err}`);
+        }
+      }
     }
-    add(!snapshotIssues.length && !missingVideos, snapshotIssues.length || missingVideos
-      ? `既有紀錄有 ${snapshotIssues.length} 份候選快照異常、${missingVideos} 段錄影無法取得${snapshotIssues.length ? `；${snapshotIssues.slice(0, 3).join('；')}${snapshotIssues.length > 3 ? '；其餘請逐抽查核' : ''}` : ''}`
-      : '既有紀錄的候選快照完整且錄影可取得');
+    const evidenceIssues = [...snapshotIssues, ...videoIssues];
+    add(!evidenceIssues.length, evidenceIssues.length
+      ? `既有紀錄有 ${snapshotIssues.length} 份候選快照異常、${videoIssues.length} 段錄影遺失或不符；${evidenceIssues.slice(0, 3).join('；')}${evidenceIssues.length > 3 ? '；其餘請逐抽查核' : ''}`
+      : '既有紀錄的候選快照與錄影大小、SHA-256 均符合紀錄');
     if (navigator.storage && navigator.storage.estimate) {
       try {
         const { usage, quota } = await navigator.storage.estimate();
@@ -1408,10 +1415,12 @@
           if (evidence.errors.length) snapshotIssues.push({ seq: r.seq, errors: evidence.errors });
           if (r.video && r.video.state === 'ready') {
             const file = cleanVideoFile(r.video.file); // never let a stored name leave the ZIP folder
-            if (snap && snap.video) {
-              if (await LW.sha256Hex(snap.video) !== r.video.sha256) throw new Error(`第 ${r.seq} 抽的錄影與原始 SHA-256 不符`);
+            let video;
+            try { video = await LW.verifiedVideo(snap, r.video); }
+            catch (err) { throw new Error(`第 ${r.seq} 抽的錄影無法通過驗證：${err.message || err}`); }
+            if (video) {
               sums.push(`${r.video.sha256}  錄影/${file}`);
-              videos.push({ name: `${folder}/錄影/${file}`, data: snap.video, record: r });
+              videos.push({ name: `${folder}/錄影/${file}`, data: video, record: r });
             } else missing.push(r);
           }
         }
