@@ -1705,14 +1705,13 @@
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.defaultPrevented || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.target.closest && e.target.closest('input, textarea, select, button, a, [contenteditable], dialog')) return;
-    if (e.key === ' ' || e.key === 'Enter') {
+    const action = LW.shortcutAction(e, { modalOpen: !!document.querySelector('dialog[open]') });
+    if (action === 'draw') {
       e.preventDefault();
       startDraw();
-    } else if (e.key === 'f' || e.key === 'F') {
+    } else if (action === 'present') {
       setPresenting(!el.app.classList.contains('is-presenting'));
-    } else if (e.key === 'Escape' && phase === 'result') {
+    } else if (action === 'close-result' && phase === 'result') {
       leaveResult();
       syncStage();
     }

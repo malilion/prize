@@ -21,6 +21,22 @@ test('state store reports a failed browser write', () => {
   assert.equal(LW.Store.save({ records: [] }), true);
 });
 
+test('draw shortcuts require a fresh key press outside editing and confirmation controls', () => {
+  const target = { closest() { return null; } };
+  const key = (value, extra = {}) => ({ key: value, target, ...extra });
+  assert.equal(LW.shortcutAction(key(' ')), 'draw');
+  assert.equal(LW.shortcutAction(key('Enter')), 'draw');
+  assert.equal(LW.shortcutAction(key(' ', { repeat: true })), null);
+  assert.equal(LW.shortcutAction(key('Enter', { repeat: true })), null);
+  assert.equal(LW.shortcutAction(key('F')), 'present');
+  assert.equal(LW.shortcutAction(key('f', { repeat: true })), null);
+  assert.equal(LW.shortcutAction(key('Escape')), 'close-result');
+  assert.equal(LW.shortcutAction(key(' ', { ctrlKey: true })), null);
+  assert.equal(LW.shortcutAction(key(' '), { modalOpen: true }), null);
+  assert.equal(LW.shortcutAction(key(' ', { target: { closest: () => ({ tagName: 'DIALOG' }) } })), null);
+  assert.equal(LW.shortcutAction(key('Enter', { target: { closest: () => ({ tagName: 'INPUT' }) } })), null);
+});
+
 test('state reads distinguish empty, damaged, unsupported, and unavailable storage', () => {
   context.localStorage = { getItem() { return null; } };
   assert.equal(LW.Store.read().status, 'empty');

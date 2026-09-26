@@ -6,6 +6,15 @@
   const $ = (sel, scope) => (scope || document).querySelector(sel);
   const $$ = (sel, scope) => Array.from((scope || document).querySelectorAll(sel));
 
+  function shortcutAction(event, { modalOpen = false } = {}) {
+    if (modalOpen || event.defaultPrevented || event.isComposing || event.repeat || event.metaKey || event.ctrlKey || event.altKey) return null;
+    if (event.target?.closest?.('input, textarea, select, button, a, [contenteditable], dialog')) return null;
+    if (event.key === ' ' || event.key === 'Enter') return 'draw';
+    if (event.key === 'f' || event.key === 'F') return 'present';
+    if (event.key === 'Escape') return 'close-result';
+    return null;
+  }
+
   const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
   const esc = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (c) => ESCAPES[c]);
 
@@ -326,7 +335,7 @@
   const rgba = (c, alpha = 1) => `rgba(${c.r}, ${c.g}, ${c.b}, ${+(c.a * alpha).toFixed(3)})`;
 
   Object.assign(LW, {
-    $, $$, esc, pad, wait, mod,
+    $, $$, shortcutAction, esc, pad, wait, mod,
     formatDateTime, formatTime, fileStamp, formatBytes, formatClock, shortHash,
     randomInt, randomFloat, sessionCode, uid,
     sha256Hex, sha256Sync,
