@@ -171,11 +171,29 @@
     return current.status !== 'unavailable' && current.raw === persistedSnapshot;
   }
 
+  function markStale() {
+    if (staleState) return;
+    toast('另一個分頁已更新此場次。請重新整理，以免覆蓋較新的抽獎紀錄。', { tone: 'error', timeout: 0 });
+    staleState = true;
+    clearTimeout(saveTimer);
+    invalidatePreflight();
+    renderAll();
+  }
+
+  function canEditSession(allowDuringDraw = false) {
+    if ((busy() && !(allowDuringDraw && phase === 'drawing')) || storageProblem) return false;
+    if (staleState || !freshStore()) {
+      markStale();
+      return false;
+    }
+    return true;
+  }
+
   function saveSessionState(next, { allowRecovery = false } = {}) {
     invalidatePreflight();
     if (storageProblem === 'unavailable' || (storageProblem && !allowRecovery)) return false;
     if (staleState || !freshStore()) {
-      staleState = true;
+      markStale();
       return false;
     }
     const saved = LW.Store.save(next);
@@ -192,9 +210,7 @@
     const write = () => {
       if (storageProblem) return false;
       if (staleState || !freshStore()) {
-        if (!staleState) toast('另一個分頁已更新此場次。請重新整理，以免覆蓋較新的抽獎紀錄。', { tone: 'error', timeout: 0 });
-        staleState = true;
-        renderControls();
+        markStale();
         return false;
       }
       const saved = LW.Store.save(state);
@@ -410,24 +426,26 @@
     renderSettings();
     el.sessionId.textContent = state.session.id;
     el.sampleNotice.hidden = !state.sample || !!storageProblem;
-    $$('.lockable').forEach((fs) => { fs.disabled = busy() || !!storageProblem || (!!fs.closest('#pane-people') && rosterLocked()); });
-    $('#sample-clear').disabled = busy() || !!storageProblem;
-    $('#reset-open').disabled = busy() || !!storageProblem;
-    $('#rehearse').disabled = busy() || !!storageProblem;
-    $('#backup-export').disabled = busy() || !!storageProblem;
-    for (const id of ['preflight', 'backup-import']) $(`#${id}`).disabled = busy();
-    el.sound.disabled = !!storageProblem;
+    $$('.lockable').forEach((fs) => { fs.disabled = busy() || !!storageProblem || staleState || (!!fs.closest('#pane-people') && rosterLocked()); });
+    $('#sample-clear').disabled = busy() || !!storageProblem || staleState;
+    $('#reset-open').disabled = busy() || !!storageProblem || staleState;
+    $('#rehearse').disabled = busy() || !!storageProblem || staleState;
+    $('#backup-export').disabled = busy() || !!storageProblem || staleState;
+    for (const id of ['preflight', 'backup-import']) $(`#${id}`).disabled = busy() || staleState;
+    el.sound.disabled = (busy() && phase !== 'drawing') || !!storageProblem || staleState;
   }
 
   function renderStateAlert() {
-    el.stateAlert.hidden = !storageProblem;
-    if (!storageProblem) return;
-    el.stateAlertMessage.textContent = storageProblem === 'unavailable'
+    el.stateAlert.hidden = !storageProblem && !staleState;
+    if (!storageProblem && !staleState) return;
+    el.stateAlertMessage.textContent = !storageProblem
+      ? '另一個分頁已更新此場次。這個分頁的設定可能未保存；請重新整理後再操作。'
+      : storageProblem === 'unavailable'
       ? '無法讀取瀏覽器儲存空間。已暫停抽獎與寫入；檢查瀏覽器權限後按「重新讀取」。'
       : storageProblem === 'corrupt'
         ? '原場次資料無法解析，已暫停寫入。請先下載原始資料，再到「設定 → 場次移轉」還原有效備份。'
         : '原場次格式與這個版本不相容，已暫停寫入。請使用建立場次的新版程式，或先下載原始資料再還原備份。';
-    el.stateAlertDownload.hidden = initialRead.raw === null;
+    el.stateAlertDownload.hidden = !storageProblem || initialRead.raw === null;
   }
 
   function renderControls() {
@@ -453,7 +471,7 @@
           `${esc(prizeLabel(p))}（${left ? `剩 ${left}/${p.qty}` : '已抽完'}）</option>`;
       }).join('')
       : '<option value="">尚未設定獎項</option>';
-    el.prizeSelect.disabled = isBusy || !!storageProblem || !state.prizes.length;
+    el.prizeSelect.disabled = isBusy || !!storageProblem || staleState || !state.prizes.length;
   }
 
   function renderTabs() {
@@ -544,7 +562,7 @@
   }
 
   function setPeople(text, { saveNow = false } = {}) {
-    if (busy() || rosterLocked() || storageProblem || staleState || !freshStore()) return false;
+    if (rosterLocked() || !canEditSession()) return false;
     if (text.length > MAX_PEOPLE_CHARS) {
       toast('名單超過可保存的長度，請先縮短再匯入。', { tone: 'error' });
       return false;
@@ -600,7 +618,7 @@
       actions.push(`<button class="btn btn--sm" type="button" data-act="save" data-id="${esc(r.id)}">${icon('download')}下載錄影</button>`);
     }
     if (r.status === 'valid') {
-      actions.push(`<button class="btn btn--sm btn--ghost" type="button" data-act="void" data-id="${esc(r.id)}"${busy() ? ' disabled' : ''}>作廢</button>`);
+      actions.push(`<button class="btn btn--sm btn--ghost" type="button" data-act="void" data-id="${esc(r.id)}"${busy() || staleState || storageProblem ? ' disabled' : ''}>作廢</button>`);
     }
     let badge = '';
     if (r.status === 'void') {
@@ -1077,7 +1095,7 @@
     }
     if (!recovered.length) return;
     if (staleState || !freshStore()) {
-      toast('找到未完成的錄影資料，但另一個分頁已更新場次。請重新整理後恢復。', { tone: 'error', timeout: 0 });
+      markStale();
       return;
     }
     for (const entry of recovered) {
@@ -1451,7 +1469,7 @@
 
   function openVoid(id) {
     const r = state.records.find((x) => x.id === id);
-    if (!r || r.status !== 'valid' || busy()) return;
+    if (!r || r.status !== 'valid' || !canEditSession()) return;
     const dlg = el.dlgVoid;
     const form = $('form', dlg);
     form.reset();
@@ -1466,7 +1484,7 @@
     const dlg = el.dlgVoid;
     if (dlg.returnValue !== 'confirm') return;
     const r = state.records.find((x) => x.id === dlg.dataset.id);
-    if (!r || r.status !== 'valid') return;
+    if (!r || r.status !== 'valid' || !canEditSession()) return;
     const form = $('form', dlg);
     const index = state.records.indexOf(r);
     const previousPrizeId = state.currentPrizeId;
@@ -1603,6 +1621,7 @@
   el.spin.addEventListener('click', startDraw);
 
   el.prizeSelect.addEventListener('change', () => {
+    if (!canEditSession()) { renderControls(); return; }
     state.currentPrizeId = el.prizeSelect.value;
     persist();
     leaveResult();
@@ -1612,6 +1631,7 @@
   });
 
   function setSound(on) {
+    if (!canEditSession(true)) return;
     LW.Sound.unlock();
     state.settings.sound = on;
     LW.Sound.setEnabled(on);
@@ -1666,6 +1686,7 @@
 
   // prizes
   $('#prize-add').addEventListener('click', () => {
+    if (!canEditSession()) return;
     const p = { id: LW.uid('prize'), name: '', qty: 1, eligibleGroup: '', repeatPolicy: 'inherit' };
     state.prizes.push(p);
     state.sample = false;
@@ -1687,6 +1708,7 @@
     const row = e.target.closest('.prize');
     const p = row && prizeById(row.dataset.id);
     if (!p) return;
+    if (!canEditSession()) { renderPrizes(); return; }
     if (e.target.dataset.field === 'name') {
       p.name = e.target.value;
       rowError(row, '');
@@ -1712,6 +1734,7 @@
     const row = e.target.closest('.prize');
     const p = row && prizeById(row.dataset.id);
     if (!p) return;
+    if (!canEditSession()) { renderPrizes(); return; }
     if (e.target.dataset.field === 'qty') {
       const n = Number(e.target.value);
       const min = Math.max(1, drawnCount(p.id));
@@ -1742,6 +1765,7 @@
   el.prizeList.addEventListener('click', (e) => {
     const button = e.target.closest('button[data-act]');
     if (!button) return;
+    if (!canEditSession()) return;
     const row = button.closest('.prize');
     const i = state.prizes.findIndex((p) => p.id === row.dataset.id);
     if (i < 0) return;
@@ -1779,7 +1803,7 @@
 
   // people
   el.peopleText.addEventListener('input', () => {
-    if (busy() || rosterLocked()) {
+    if (!canEditSession() || rosterLocked()) {
       el.peopleText.value = state.people;
       return;
     }
@@ -1842,7 +1866,7 @@
     if (!pendingPeopleImport) return;
     const imported = pendingPeopleImport;
     importDialog.close();
-    if (busy() || rosterLocked() || storageProblem || staleState || !freshStore()) {
+    if (rosterLocked() || !canEditSession()) {
       toast('場次已變更或無法安全保存，請重新整理後再匯入。', { tone: 'error', timeout: 0 });
       return;
     }
@@ -1881,6 +1905,7 @@
   });
 
   el.optExclude.addEventListener('change', () => {
+    if (!canEditSession()) { el.optExclude.checked = !state.settings.allowRepeat; return; }
     state.settings.allowRepeat = !el.optExclude.checked;
     persist();
     renderPeopleMeta();
@@ -1908,22 +1933,26 @@
 
   // settings
   el.optTitle.addEventListener('input', () => {
+    if (!canEditSession()) return;
     state.title = el.optTitle.value;
     persist();
     stage.setView({ title: state.title.trim() });
   });
   el.optSpin.addEventListener('input', () => {
+    if (!canEditSession()) return;
     state.settings.spinSeconds = Number(el.optSpin.value);
     el.optSpinOut.textContent = `${state.settings.spinSeconds} 秒`;
     persist();
   });
   el.optRecord.addEventListener('change', () => {
+    if (!canEditSession()) return;
     state.settings.record = el.optRecord.checked;
     persist();
     renderSettings();
     renderControls();
   });
   el.optAutoDl.addEventListener('change', () => {
+    if (!canEditSession()) return;
     state.settings.autoDownload = el.optAutoDl.checked;
     persist();
   });
@@ -1957,10 +1986,7 @@
   window.addEventListener('pagehide', () => persist(true));
   window.addEventListener('storage', (event) => {
     if (event.key !== LW.Store.stateKey || event.newValue === persistedSnapshot) return;
-    invalidatePreflight();
-    if (!staleState) toast('另一個分頁已更新此場次。請重新整理後繼續操作。', { tone: 'error', timeout: 0 });
-    staleState = true;
-    renderControls();
+    markStale();
   });
   window.addEventListener('beforeunload', (e) => {
     persist(true);
