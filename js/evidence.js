@@ -186,6 +186,8 @@
           }
         }
       }
+    } else if (audit.format === 'lucky-wheel-audit/2') {
+      errors.push('新版憑證包缺少場次狀態.json，無法核對完整名單與候選人資格');
     } else warnings.push('舊版憑證包沒有場次狀態.json，無法還原完整場次');
     return { files, prefix, audit, state, snapshots, errors, warnings };
   }
