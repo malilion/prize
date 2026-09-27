@@ -96,6 +96,7 @@
           sha256: sha(v.sha256),
           durationMs: int(v.durationMs, 0, 36e5, 0),
           downloaded: !!v.downloaded,
+          exported: !!v.exported,
         });
       } else if (video.state === 'failed') {
         video.error = str(v.error, 200);
@@ -637,7 +638,7 @@
     let video;
     if (v.state === 'ready') {
       video = `<p class="record__video">
-        <span>錄影 ${(v.durationMs / 1000).toFixed(1)} 秒・${LW.formatBytes(v.size)}${v.downloaded ? '・已下載' : ''}</span>
+        <span>錄影 ${(v.durationMs / 1000).toFixed(1)} 秒・${LW.formatBytes(v.size)}${[v.downloaded && '已下載', v.exported && '已匯出'].filter(Boolean).map((label) => `・${label}`).join('')}</span>
         <span class="record__hash mono" title="SHA-256：${esc(v.sha256)}">SHA-256 ${esc(LW.shortHash(v.sha256))}</span>
       </p>`;
     } else if (v.state === 'recording') {
@@ -791,7 +792,7 @@
   function renderStorageInfo() {
     const videos = readyVideos();
     const bytes = videos.reduce((n, r) => n + (r.video.size || 0), 0);
-    const pending = videos.filter((r) => !r.video.downloaded).length;
+    const pending = videos.filter((r) => !r.video.downloaded && !r.video.exported).length;
     if (!vaultChecked) {
       el.storageInfo.textContent = '';
       return;
@@ -803,7 +804,7 @@
     }
     el.storageInfo.classList.toggle('is-warning', pending > 0);
     el.storageInfo.textContent = videos.length
-      ? `紀錄標示 ${videos.length} 段錄影（${LW.formatBytes(bytes)}）${pending ? `，其中 ${pending} 段尚未標記為已下載` : '，都已標記為已下載'}。播放或匯出時會再確認檔案是否仍在瀏覽器中。`
+      ? `紀錄標示 ${videos.length} 段錄影（${LW.formatBytes(bytes)}）${pending ? `，其中 ${pending} 段尚未下載或匯出` : '，都已下載或匯出'}。播放或匯出時會再確認檔案是否仍在瀏覽器中。`
       : '錄影會同時存在這台電腦的瀏覽器裡，重新整理也不會消失。';
   }
 
@@ -1046,6 +1047,7 @@
     const checks = [];
     const add = (ok, message) => checks.push({ ok, message });
     add(!state.sample, state.sample ? '目前仍是範例資料' : '已使用正式資料');
+    add(!!state.title.trim(), state.title.trim() ? '已填寫活動名稱' : '尚未填寫活動名稱；錄影畫面、匯出檔名與驗證頁會無法辨識是哪場活動');
     add(state.prizes.length > 0 && state.prizes.every((p) => p.name.trim() && p.qty > 0), '獎項名稱與名額完整');
     add(people().length > 0, `名單有 ${people().length} 人`);
     add(state.rosterKeyScheme === 2, state.rosterKeyScheme === 2 ? '名單識別鍵不會互相衝突' : '舊版場次的姓名識別鍵有衝突；請先備份，再重設抽獎');
@@ -1195,6 +1197,7 @@
         sha256,
         durationMs: Math.round(out.durationMs),
         downloaded: false,
+        exported: false,
       };
       await LW.Vault.update(record.id, { video: out.blob, videoMeta: { ...record.video } });
       const volatile = !LW.Vault.durable;
@@ -1503,7 +1506,7 @@
             void: state.records.filter((record) => record.status === 'void').length,
           } }, state.session.id);
         exportReceiptSaved = LW.Store.setPref('lastExportReceipt', exportReceipt);
-        for (const v of videos) v.record.video.downloaded = true;
+        for (const v of videos) v.record.video.exported = true;
         persist(true);
         if (missing.length || snapshotIssues.length || oversizedText.length || !exportReceiptSaved) {
           const evidenceProblems = [
@@ -1828,12 +1831,12 @@
     if (busy()) return;
     const dlg = el.dlgReset;
     const videos = readyVideos();
-    const pending = videos.filter((r) => !r.video.downloaded).length;
+    const pending = videos.filter((r) => !r.video.downloaded && !r.video.exported).length;
     $('[data-f="records"]', dlg).textContent = state.records.length;
     $('[data-f="videos"]', dlg).textContent = videos.length;
     const warn = $('[data-f="pending"]', dlg);
     warn.hidden = !pending;
-    warn.textContent = pending ? `其中 ${pending} 段錄影還沒下載過，建議先匯出憑證包。` : '';
+    warn.textContent = pending ? `其中 ${pending} 段錄影還沒下載或匯出過，建議先匯出憑證包。` : '';
     $('#reset-confirm').value = '';
     $('#reset-go').disabled = true;
     openDialog(dlg);

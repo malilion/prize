@@ -318,7 +318,7 @@
       if (await LW.sha256Hex(video) !== meta.sha256) return null;
     } catch (_) { return null; }
     return { state: 'ready', file: meta.file, mime: meta.mime, size: meta.size,
-      sha256: meta.sha256, durationMs: meta.durationMs, downloaded: !!meta.downloaded };
+      sha256: meta.sha256, durationMs: meta.durationMs, downloaded: !!meta.downloaded, exported: !!meta.exported };
   }
 
   /** Verify the current record against the saved Blob before serving it for playback or download. */

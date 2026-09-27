@@ -85,7 +85,7 @@ test('receipt state hash ignores download bookkeeping but detects session change
     records: [{ id: 'draw', status: 'valid', name: '甲', video: { state: 'ready', downloaded: false } }] };
   const hash = LW.receiptStateHash(state);
   assert.match(hash, /^[0-9a-f]{64}$/);
-  const reloaded = { records: [{ video: { downloaded: true, state: 'ready' }, returnToPool: false,
+  const reloaded = { records: [{ video: { downloaded: true, exported: true, state: 'ready' }, returnToPool: false,
     name: '甲', status: 'valid', id: 'draw' }], settings: { record: true },
     prizes: [{ qty: 1, name: '獎品', id: 'p' }], session: { id: 'ABCD-EFGH' },
     people: '甲\n乙', title: '活動', v: 1 };
