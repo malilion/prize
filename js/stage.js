@@ -322,7 +322,7 @@
       ctx.drawImage(this.background, 0, 0);
       this.drawWheel(ctx, now);
       this.drawBulbs(ctx, now);
-      this.drawHub(ctx);
+      this.drawHub(ctx, now);
       this.drawPointer(ctx);
       if (this.labels.length > MAX_PAINTED_BANDS) {
         this.text('大量名單：色帶為縮略示意，抽選依完整名單', WHEEL.cx, 970,
@@ -563,7 +563,7 @@
       }
     }
 
-    drawHub(ctx) {
+    drawHub(ctx, now) {
       const T = this.theme;
       const { cx, cy } = WHEEL;
       const ring = RIM_R * 2 * 0.012;
@@ -598,14 +598,15 @@
       ctx.fill();
 
       ctx.save();
-      ctx.translate(cx, cy - 46);
-      ctx.scale(1.7, 1.7);
+      ctx.translate(cx, cy - 34);
+      ctx.scale(1.6, 1.6);
       ctx.fillStyle = rgba(T.segInkDark, 0.85);
       ctx.fill(paw());
       ctx.restore();
-      const count = String(this.view.candidateCount);
-      this.text(count, cx, cy + 30, { size: 54, weight: 800, color: T.segInkDark, align: 'center', maxW: HUB * 1.5, min: 30 });
-      this.text('候選人', cx, cy + 66, { size: 20, weight: 700, color: T.segInkDark, align: 'center', alpha: 0.75 });
+      // GO pulses while the wheel turns, like the LuckyWheel button.
+      const pulse = this.spin && !this.reducedMotion ? 0.775 + 0.225 * Math.cos((now / 600) * Math.PI) : 1;
+      this.text('GO', cx, cy + 52 + 2, { size: 64, weight: 800, color: T.rimHi, align: 'center', alpha: 0.45 * pulse });
+      this.text('GO', cx, cy + 52, { size: 64, weight: 800, color: T.segInkDark, align: 'center', alpha: pulse });
     }
 
     /** Teardrop pointer hanging from a pin on the rim; the passing pegs flick its tip. */
