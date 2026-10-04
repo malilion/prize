@@ -50,20 +50,31 @@
   --stage-ink-3:  oklch(64% 0.02 50);
   --stage-accent: oklch(84% 0.14 85);
   --stage-rec:    oklch(63% 0.22 27);
-  --seg-1:        oklch(55% 0.19 29);   /* 朱紅 */
-  --seg-2:        oklch(94% 0.03 85);   /* 米白 */
-  --seg-3:        oklch(35% 0.11 22);   /* 酒紅 */
-  --seg-4:        oklch(81% 0.13 82);   /* 金 */
-  --seg-ink-light: oklch(97% 0.012 85);
-  --seg-ink-dark:  oklch(25% 0.05 30);
+  /* Wheel — MalilionUI LuckyWheel: brushed-gold rim, metal-tone wedges (dark → light toward the rim) */
+  --seg-1:        #d48f17;   /* gold */
+  --seg-1-hi:     #ffd56a;
+  --seg-2:        #77818f;   /* steel */
+  --seg-2-hi:     #e3e7ed;
+  --seg-3:        #f06d8c;   /* bean */
+  --seg-3-hi:     #ffc2cf;
+  --seg-4:        #0a9f89;   /* tech */
+  --seg-4-hi:     #7af6e2;
+  --seg-ink-light: #fff8e3;
+  --seg-ink-dark:  #1a1104;
   --seg-empty:    oklch(25% 0.02 30);
-  --rim:          oklch(74% 0.12 80);
-  --rim-shade:    oklch(47% 0.09 60);
-  --bulb-on:      oklch(97% 0.06 95);
-  --bulb-off:     oklch(50% 0.07 65);
-  --hub:          oklch(21% 0.03 30);
-  --pointer:      oklch(87% 0.13 88);
-  --pointer-edge: oklch(28% 0.07 30);
+  --rim-hi:       #fff4cc;
+  --rim:          #ffd56a;
+  --rim-mid:      #b7780f;
+  --rim-2:        #f2bd4a;
+  --rim-shade:    #7c4e0b;
+  --groove:       #1a1206;
+  --bulb-on:      #fff3c4;
+  --bulb-off:     #5a3d0c;
+  --bulb-glow:    #ffd66a;
+  --peg:          #fff0bf;
+  --peg-edge:     #6b450a;
+  --hub-ring:     #2b1b06;
+  --pointer-edge: #5a3a07;
 
   /* Type */
   --font-body: "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", "Heiti TC", sans-serif;

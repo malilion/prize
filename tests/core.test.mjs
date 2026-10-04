@@ -494,7 +494,7 @@ test('large rosters use bounded wheel paint while retaining every candidate inde
   stageContext.LW.Stage.prototype.paintWheel.call(stage, labels);
   assert.ok(arcs <= 722, `painted ${arcs} arcs for ${labels.length} people`);
   const winnerIndex = 40721;
-  stage.rotation = -((winnerIndex + 0.5) * Math.PI * 2) / labels.length;
+  stage.rotation = -Math.PI / 2 - ((winnerIndex + 0.5) * Math.PI * 2) / labels.length;
   assert.equal(stageContext.LW.Stage.prototype.pointerIndex.call(stage), winnerIndex);
   const spin = stageContext.LW.Stage.prototype.spinTo.call(stage, winnerIndex, 8000);
   stage.rotation = stage.spin.to;

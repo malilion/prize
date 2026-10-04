@@ -11,19 +11,62 @@
   const W = 1920;
   const H = 1080;
   const TAU = Math.PI * 2;
-  const WHEEL = { cx: 590, cy: 500, r: 420 };
-  const RIM = 34;
-  const HUB = 74;
-  const BULBS = 28;
+  // Proportions follow MalilionUI's LuckyWheel (a 200-unit SVG: rim 99, groove 87, face 82).
+  const U = 454 / 99;
+  const WHEEL = { cx: 590, cy: 500, r: 82 * U };
+  const RIM_R = 99 * U;
+  const GROOVE_R = 87 * U;
+  const BULB_RING = 93 * U;
+  const BULB_R = 2.6 * U;
+  const BULBS = 16;
+  const PEG_RING = 79 * U;
+  const PEG_R = 1.9 * U;
+  const MAX_PEGS = 72;
+  const HUB = 25 * U;
+  const POINTER = -Math.PI / 2; // top of the wheel
+  const PIN_Y = -92.5 * U;
   const MAX_PAINTED_BANDS = 720;
   const INFO = { x: 1150, w: 690 };
   const FOOT_Y = 1000;
 
   const TOKENS = [
     'stage-bg', 'stage-bloom', 'stage-band', 'stage-ink', 'stage-ink-2', 'stage-ink-3', 'stage-accent',
-    'stage-rec', 'seg-1', 'seg-2', 'seg-3', 'seg-4', 'seg-ink-light', 'seg-ink-dark', 'seg-empty', 'rim',
-    'rim-shade', 'bulb-on', 'bulb-off', 'hub', 'pointer', 'pointer-edge',
+    'stage-rec', 'seg-1', 'seg-1-hi', 'seg-2', 'seg-2-hi', 'seg-3', 'seg-3-hi', 'seg-4', 'seg-4-hi',
+    'seg-ink-light', 'seg-ink-dark', 'seg-empty', 'rim-hi', 'rim', 'rim-mid', 'rim-2', 'rim-shade', 'groove',
+    'bulb-on', 'bulb-off', 'bulb-glow', 'peg', 'peg-edge', 'hub-ring', 'pointer-edge',
   ];
+
+  /** The LuckyWheel brushed-metal gradient, top to bottom across [y0, y1]. */
+  function metal(g, T, y0, y1) {
+    const grad = g.createLinearGradient(0, y0, 0, y1);
+    grad.addColorStop(0, rgba(T.rimHi));
+    grad.addColorStop(0.22, rgba(T.rim));
+    grad.addColorStop(0.48, rgba(T.rimMid));
+    grad.addColorStop(0.7, rgba(T.rim2));
+    grad.addColorStop(1, rgba(T.rimShade));
+    return grad;
+  }
+
+  const mix = (a, b, k) => `rgb(${Math.round(a.r + (b.r - a.r) * k)}, ${Math.round(a.g + (b.g - a.g) * k)}, ${Math.round(a.b + (b.b - a.b) * k)})`;
+
+  let pawPath = null;
+  /** Paw print in a 24×24 box centred on the origin (MalilionUI's paw glyph). */
+  function paw() {
+    if (pawPath) return pawPath;
+    const p = new Path2D();
+    const toe = (x, y, rx, ry, deg) => {
+      p.moveTo(x - 12 + rx * Math.cos((deg * Math.PI) / 180), y - 12 + rx * Math.sin((deg * Math.PI) / 180));
+      p.ellipse(x - 12, y - 12, rx, ry, (deg * Math.PI) / 180, 0, TAU);
+    };
+    toe(4.6, 10, 2.1, 2.7, -24);
+    toe(9, 5.6, 2.25, 2.95, -8);
+    toe(15, 5.6, 2.25, 2.95, 8);
+    toe(19.4, 10, 2.1, 2.7, 24);
+    const pad = new Path2D('M12 11.6c-3.2 0-6.8 3.7-6.8 6.6 0 2 1.5 3.3 3.4 3.3 1.3 0 2.2-.6 3.4-.6s2.1.6 3.4.6c1.9 0 3.4-1.3 3.4-3.3 0-2.9-3.6-6.6-6.8-6.6z');
+    p.addPath(pad, { a: 1, b: 0, c: 0, d: 1, e: -12, f: -12 });
+    pawPath = p;
+    return p;
+  }
 
   function readTheme() {
     const css = getComputedStyle(document.documentElement);
@@ -141,7 +184,7 @@
       this.wheel = this.paintWheel(this.labels);
       this.highlight = null;
       const n = this.labels.length;
-      if (n) this.rotation = mod(-(this.pointerIndex() + 0.5) * (TAU / n), TAU); // rest mid-slice
+      if (n) this.rotation = mod(POINTER - (this.pointerIndex() + 0.5) * (TAU / n), TAU); // rest mid-slice
       this.lastIndex = this.pointerIndex();
       this.dirty = true;
     }
@@ -159,7 +202,7 @@
     pointerIndex() {
       const n = this.labels.length;
       if (!n) return -1;
-      return Math.min(n - 1, Math.floor(mod(-this.rotation, TAU) / (TAU / n)));
+      return Math.min(n - 1, Math.floor(mod(POINTER - this.rotation, TAU) / (TAU / n)));
     }
 
     labelAtPointer() {
@@ -176,7 +219,7 @@
       const turns = Math.max(4, Math.round((durationMs / 1000) * 0.75));
       const from = this.rotation;
       const base = from + turns * TAU;
-      const to = base + mod(-target - base, TAU);
+      const to = base + mod(POINTER - target - base, TAU);
       this.highlight = null;
       this.confetti = [];
       return new Promise((resolve) => {
@@ -189,20 +232,24 @@
       this.highlight = { index: this.pointerIndex(), t0: this.resultAt };
       this.dirty = true;
       if (this.reducedMotion) return;
+      // Paw-print fireworks bursting from the pointer, in the wheel's metal tones.
       const T = this.theme;
-      const colors = [T.seg1, T.seg2, T.seg4, T.stageAccent, T.bulbOn, T.seg3];
-      for (let i = 0; i < 180; i++) {
+      const colors = [T.seg1Hi, T.seg2Hi, T.seg3, T.seg4Hi, T.bulbOn, T.rim2];
+      const ox = WHEEL.cx;
+      const oy = WHEEL.cy + PIN_Y;
+      for (let i = 0; i < 140; i++) {
+        const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.5;
+        const speed = 380 + Math.random() * 820;
         this.confetti.push({
-          x: Math.random() * W,
-          y: -20 - Math.random() * 360,
-          vx: (Math.random() - 0.5) * 260,
-          vy: 140 + Math.random() * 240,
-          rot: Math.random() * TAU,
-          vr: (Math.random() - 0.5) * 9,
-          w: 10 + Math.random() * 12,
-          h: 6 + Math.random() * 8,
-          phase: Math.random() * TAU,
-          sway: 1.4 + Math.random() * 2.2,
+          x: ox,
+          y: oy,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          rot: (Math.random() - 0.5) * 1.2,
+          vr: (Math.random() - 0.5) * 4,
+          size: 0.9 + Math.random() * 1.3,
+          life: 0,
+          ttl: 2.2 + Math.random() * 1.4,
           color: colors[i % colors.length],
         });
       }
@@ -256,6 +303,7 @@
         this.kick = 0;
       }
       if (this.confetti.length || this.recording || now - this.resultAt < 3800) active = true;
+      if (!this.reducedMotion) active = true; // bulbs shimmer while idle; the winning slice breathes
 
       const second = Math.floor(Date.now() / 1000);
       if (second !== this.lastSecond) {
@@ -299,36 +347,31 @@
 
       g.fillStyle = rgba(T.stageBg);
       g.fillRect(0, 0, W, H);
-      const bloom = g.createRadialGradient(cx, cy, r * 0.4, cx, cy, r * 1.9);
+      const bloom = g.createRadialGradient(cx, cy, r * 0.4, cx, cy, r * 2.1);
       bloom.addColorStop(0, rgba(T.stageBloom, 0.85));
       bloom.addColorStop(1, rgba(T.stageBloom, 0));
       g.fillStyle = bloom;
       g.fillRect(0, 0, W, H);
 
+      // Brushed-gold rim with a soft drop shadow, then the dark groove the bulbs sit in.
       g.save();
-      g.shadowColor = rgba(T.stageBand, 0.9);
-      g.shadowBlur = 70;
-      g.shadowOffsetY = 26;
-      g.fillStyle = rgba(T.rimShade);
+      g.shadowColor = 'rgba(0, 0, 0, 0.55)';
+      g.shadowBlur = 74;
+      g.shadowOffsetY = 40;
+      g.fillStyle = metal(g, T, cy - RIM_R, cy + RIM_R);
       g.beginPath();
-      g.arc(cx, cy, r + RIM, 0, TAU);
+      g.arc(cx, cy, RIM_R, 0, TAU);
       g.fill();
       g.restore();
-
-      const rim = g.createLinearGradient(cx - r, cy - r - RIM, cx + r, cy + r + RIM);
-      rim.addColorStop(0, rgba(T.rim));
-      rim.addColorStop(1, rgba(T.rimShade));
-      g.fillStyle = rim;
-      g.beginPath();
-      g.arc(cx, cy, r + RIM, 0, TAU);
-      g.fill();
-      g.lineWidth = 3;
-      g.strokeStyle = rgba(T.pointerEdge, 0.7);
+      g.lineWidth = 0.6 * U;
+      g.strokeStyle = 'rgba(0, 0, 0, 0.35)';
       g.stroke();
       g.beginPath();
-      g.arc(cx, cy, r + 3, 0, TAU);
-      g.lineWidth = 6;
-      g.strokeStyle = rgba(T.rimShade);
+      g.arc(cx, cy, GROOVE_R, 0, TAU);
+      g.fillStyle = rgba(T.groove);
+      g.fill();
+      g.lineWidth = 0.8 * U;
+      g.strokeStyle = 'rgba(255, 236, 180, 0.35)';
       g.stroke();
 
       g.fillStyle = rgba(T.stageBand);
@@ -363,15 +406,20 @@
         return c;
       }
 
-      // Subpixel slices cannot be distinguished on an 840px wheel. Keep the full
+      // Subpixel slices cannot be distinguished on a 750px wheel. Keep the full
       // roster for the pointer and draw outcome, but bound raster work for large lists.
       const painted = Math.min(n, MAX_PAINTED_BANDS);
       const slice = TAU / painted;
-      const fills = [T.seg1, T.seg2, T.seg3, T.seg4];
-      const inks = [T.segInkLight, T.segInkDark, T.segInkLight, T.segInkDark];
+      const tones = [[T.seg1, T.seg1Hi], [T.seg2, T.seg2Hi], [T.seg3, T.seg3Hi], [T.seg4, T.seg4Hi]];
+      const fills = tones.map(([deep, hi]) => {
+        const grad = g.createRadialGradient(0, 0, 0, 0, 0, r);
+        grad.addColorStop(0.2, rgba(deep));
+        grad.addColorStop(1, rgba(hi));
+        return grad;
+      });
       const colorOf = segmentColors(painted, fills.length);
 
-      g.fillStyle = rgba(T.seg3); // base coat hides anti-aliasing seams between slices
+      g.fillStyle = fills[1]; // base coat hides anti-aliasing seams between slices
       g.beginPath();
       g.arc(0, 0, r, 0, TAU);
       g.fill();
@@ -380,12 +428,12 @@
         g.moveTo(0, 0);
         g.arc(0, 0, r, i * slice, (i + 1) * slice);
         g.closePath();
-        g.fillStyle = rgba(fills[colorOf[i]]);
+        g.fillStyle = fills[colorOf[i]];
         g.fill();
       }
       if (n > 1 && n <= 400) {
-        g.strokeStyle = rgba(T.rimShade, 0.55);
-        g.lineWidth = n > 120 ? 1 : 2;
+        g.strokeStyle = 'rgba(26, 17, 4, 0.55)';
+        g.lineWidth = n > 120 ? 1 : 0.8 * U;
         g.beginPath();
         for (let i = 0; i < n; i++) {
           g.moveTo(0, 0);
@@ -393,37 +441,39 @@
         }
         g.stroke();
       }
+      if (n > 1 && n <= MAX_PEGS) {
+        g.fillStyle = rgba(T.peg);
+        g.strokeStyle = rgba(T.pegEdge);
+        g.lineWidth = 0.7 * U;
+        for (let i = 0; i < n; i++) {
+          g.beginPath();
+          g.arc(Math.cos(i * slice) * PEG_RING, Math.sin(i * slice) * PEG_RING, PEG_R, 0, TAU);
+          g.fill();
+          g.stroke();
+        }
+      }
 
       const size = Math.min(44, 0.55 * (r - 70) * slice);
       if (size >= 11) {
-        const outer = r - 24;
-        const inner = HUB + 30;
-        g.font = `600 ${size.toFixed(1)}px ${T.fontBody}`;
+        const outer = (n <= MAX_PEGS ? PEG_RING - PEG_R : r) - 18;
+        const inner = HUB + 34;
+        g.font = `700 ${size.toFixed(1)}px ${T.fontBody}`;
         g.textAlign = 'right';
         g.textBaseline = 'middle';
+        g.fillStyle = rgba(T.segInkDark);
         for (let i = 0; i < n; i++) {
           g.save();
           g.rotate((i + 0.5) * slice);
-          g.fillStyle = rgba(inks[colorOf[i]]);
           g.fillText(truncate(g, labels[i], outer - inner), outer, 0);
           g.restore();
         }
       }
-
-      const shade = g.createRadialGradient(0, 0, r * 0.78, 0, 0, r);
-      shade.addColorStop(0, rgba(T.stageBg, 0));
-      shade.addColorStop(1, rgba(T.stageBg, 0.3));
-      g.fillStyle = shade;
-      g.beginPath();
-      g.arc(0, 0, r, 0, TAU);
-      g.fill();
       return c;
     }
 
     /* ---------- per-frame layers ---------- */
 
     drawWheel(ctx, now) {
-      const T = this.theme;
       const { cx, cy, r } = WHEEL;
       ctx.save();
       ctx.translate(cx, cy);
@@ -434,100 +484,160 @@
         const i = this.highlight.index;
         const k = Math.min(1, (now - this.highlight.t0) / 450);
         const e = 1 - Math.pow(1 - k, 3);
+        // Dim the losers, light up the winning slice with a slow breathing glow.
         ctx.beginPath();
         ctx.moveTo(0, 0);
         ctx.arc(0, 0, r + 1, (i + 1) * slice, i * slice + TAU);
         ctx.closePath();
-        ctx.fillStyle = rgba(T.stageBg, 0.6 * e);
+        ctx.fillStyle = `rgba(0, 0, 0, ${(0.45 * e).toFixed(3)})`;
         ctx.fill();
+        const breath = this.reducedMotion ? 1 : 0.5 - 0.5 * Math.cos(((now - this.highlight.t0) / 1100) * Math.PI);
         ctx.beginPath();
         ctx.moveTo(0, 0);
-        ctx.arc(0, 0, r - 3, i * slice, (i + 1) * slice);
+        ctx.arc(0, 0, r - 2, i * slice, (i + 1) * slice);
         ctx.closePath();
+        ctx.fillStyle = `rgba(255, 255, 255, ${(0.12 * breath * e).toFixed(3)})`;
+        ctx.fill();
         ctx.lineJoin = 'round';
-        ctx.lineWidth = 6;
-        ctx.strokeStyle = rgba(T.stageAccent, e);
+        ctx.lineWidth = 1.6 * U;
+        ctx.shadowColor = `rgba(255, 214, 106, ${(0.95 * breath * e).toFixed(3)})`;
+        ctx.shadowBlur = 5 * U;
+        ctx.strokeStyle = rgba(this.theme.rimHi, e);
         ctx.stroke();
       }
       ctx.restore();
+      this.drawSheen(ctx);
     }
 
+    /** Fixed glassy highlight over the face, like light catching a lacquered wheel. */
+    drawSheen(ctx) {
+      const { cx, cy, r } = WHEEL;
+      const sheen = ctx.createRadialGradient(cx - 0.24 * r, cy - 0.48 * r, 0, cx - 0.24 * r, cy - 0.48 * r, 1.5 * r);
+      sheen.addColorStop(0, 'rgba(255, 255, 255, 0.34)');
+      sheen.addColorStop(0.45, 'rgba(255, 255, 255, 0.06)');
+      sheen.addColorStop(1, 'rgba(0, 0, 0, 0.22)');
+      ctx.save();
+      ctx.globalCompositeOperation = 'soft-light';
+      ctx.fillStyle = sheen;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, TAU);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    /** Marquee bulbs: a slow shimmer at rest, a running chase while spinning, four flashes on the result. */
     drawBulbs(ctx, now) {
       const T = this.theme;
-      const { cx, cy, r } = WHEEL;
-      const ring = r + RIM / 2;
+      const { cx, cy } = WHEEL;
       const still = this.reducedMotion; // decorative light shows sit out under reduced motion
-      const flashing = !still && now - this.resultAt < 3600;
-      const step = Math.floor(now / 110);
+      const sinceResult = now - this.resultAt;
+      const t = now / 1000;
       for (let k = 0; k < BULBS; k++) {
-        const angle = ((k + 0.5) * TAU) / BULBS;
-        const x = cx + Math.cos(angle) * ring;
-        const y = cy + Math.sin(angle) * ring;
-        let on = true;
-        if (this.spin && !still) on = mod(k - step, 3) === 0;
-        else if (flashing) on = Math.floor(now / 180) % 2 === 0;
-        if (on) {
+        const angle = POINTER + (k * TAU) / BULBS;
+        const x = cx + Math.cos(angle) * BULB_RING;
+        const y = cy + Math.sin(angle) * BULB_RING;
+        let level;
+        if (still) level = 1;
+        else if (this.spin) level = mod(t + k * 0.07, 0.42) < 0.14 ? 1 : 0;
+        else if (sinceResult < 2000) level = mod(sinceResult, 500) < 250 ? 1 : 0;
+        else {
+          const phase = mod(t - k * 0.15 - (k % 2) * 1.2, 2.4) / 2.4;
+          level = 0.5 - 0.5 * Math.cos(phase * TAU);
+        }
+        if (level > 0.05) {
+          const halo = ctx.createRadialGradient(x, y, BULB_R * 0.6, x, y, BULB_R * 2.6);
+          halo.addColorStop(0, rgba(T.bulbGlow, 0.9 * level));
+          halo.addColorStop(1, rgba(T.bulbGlow, 0));
+          ctx.fillStyle = halo;
           ctx.beginPath();
-          ctx.arc(x, y, 13, 0, TAU);
-          ctx.fillStyle = rgba(T.bulbOn, 0.16);
+          ctx.arc(x, y, BULB_R * 2.6, 0, TAU);
           ctx.fill();
         }
         ctx.beginPath();
-        ctx.arc(x, y, 7.5, 0, TAU);
-        ctx.fillStyle = rgba(on ? T.bulbOn : T.bulbOff);
+        ctx.arc(x, y, BULB_R, 0, TAU);
+        ctx.fillStyle = mix(T.bulbOff, T.bulbOn, level);
         ctx.fill();
+        ctx.lineWidth = 0.5 * U;
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
+        ctx.stroke();
       }
     }
 
     drawHub(ctx) {
       const T = this.theme;
       const { cx, cy } = WHEEL;
+      const ring = RIM_R * 2 * 0.012;
+      ctx.save();
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+      ctx.shadowBlur = 51;
+      ctx.shadowOffsetY = 23;
       ctx.beginPath();
-      ctx.arc(cx, cy, HUB + 9, 0, TAU);
-      ctx.fillStyle = rgba(T.rim);
+      ctx.arc(cx, cy, HUB + RIM_R * 2 * 0.022, 0, TAU);
+      ctx.fillStyle = rgba(T.rim2);
+      ctx.fill();
+      ctx.restore();
+      ctx.beginPath();
+      ctx.arc(cx, cy, HUB + ring, 0, TAU);
+      ctx.fillStyle = rgba(T.hubRing);
       ctx.fill();
       ctx.beginPath();
       ctx.arc(cx, cy, HUB, 0, TAU);
-      ctx.fillStyle = rgba(T.hub);
+      const face = ctx.createLinearGradient(0, cy - HUB, 0, cy + HUB);
+      face.addColorStop(0, rgba(T.rimHi));
+      face.addColorStop(0.18, rgba(T.rim));
+      face.addColorStop(0.42, '#e8a527');
+      face.addColorStop(0.58, rgba(T.rimMid));
+      face.addColorStop(0.8, rgba(T.rim2));
+      face.addColorStop(1, '#8d5a0c');
+      ctx.fillStyle = face;
       ctx.fill();
+      const gloss = ctx.createRadialGradient(cx - 0.3 * HUB, cy - 0.44 * HUB, 0, cx - 0.3 * HUB, cy - 0.44 * HUB, 0.84 * HUB);
+      gloss.addColorStop(0, 'rgba(255, 255, 255, 0.55)');
+      gloss.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = gloss;
+      ctx.fill();
+
+      ctx.save();
+      ctx.translate(cx, cy - 46);
+      ctx.scale(1.7, 1.7);
+      ctx.fillStyle = rgba(T.segInkDark, 0.85);
+      ctx.fill(paw());
+      ctx.restore();
       const count = String(this.view.candidateCount);
-      this.text(count, cx, cy + 10, { size: count.length > 3 ? 36 : 46, weight: 700, color: T.stageInk, align: 'center' });
-      this.text('候選人', cx, cy + 42, { size: 20, weight: 500, color: T.stageInk3, align: 'center' });
+      this.text(count, cx, cy + 30, { size: 54, weight: 800, color: T.segInkDark, align: 'center', maxW: HUB * 1.5, min: 30 });
+      this.text('候選人', cx, cy + 66, { size: 20, weight: 700, color: T.segInkDark, align: 'center', alpha: 0.75 });
     }
 
+    /** Teardrop pointer hanging from a pin on the rim; the passing pegs flick its tip. */
     drawPointer(ctx) {
       const T = this.theme;
-      const { cx, cy, r } = WHEEL;
-      const pivot = cx + r + RIM + 34;
-      const length = pivot - (cx + r - 12);
-      const radius = 30;
-      const phi = Math.acos(radius / length);
+      const { cx, cy } = WHEEL;
       ctx.save();
-      ctx.translate(pivot, cy);
-      ctx.rotate(-this.kick * 0.32); // flicks against the passing pegs
+      ctx.translate(cx, cy + PIN_Y);
+      ctx.rotate(-this.kick * 0.35);
+      ctx.translate(0, -PIN_Y);
       ctx.beginPath();
-      ctx.moveTo(-length, 0);
-      ctx.lineTo(Math.cos(Math.PI + phi) * radius, Math.sin(Math.PI + phi) * radius);
-      ctx.arc(0, 0, radius, Math.PI + phi, Math.PI - phi + TAU);
+      ctx.moveTo(0, -73 * U);
+      ctx.lineTo(-9.5 * U, -94.5 * U);
+      ctx.quadraticCurveTo(0, -101 * U, 9.5 * U, -94.5 * U);
       ctx.closePath();
-      ctx.shadowColor = rgba(T.stageBand, 0.85);
-      ctx.shadowBlur = 18;
-      ctx.shadowOffsetY = 8;
-      const fill = ctx.createLinearGradient(0, -radius, 0, radius);
-      fill.addColorStop(0, rgba(T.pointer));
-      fill.addColorStop(1, rgba(T.rim));
-      ctx.fillStyle = fill;
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+      ctx.shadowBlur = 2 * U;
+      ctx.shadowOffsetY = 2 * U;
+      ctx.fillStyle = metal(ctx, T, -101 * U, -73 * U);
       ctx.fill();
       ctx.shadowColor = 'transparent';
-      ctx.shadowBlur = 0;
-      ctx.shadowOffsetY = 0;
-      ctx.lineWidth = 3;
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 0.8 * U;
       ctx.strokeStyle = rgba(T.pointerEdge);
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(0, 0, 9, 0, TAU);
-      ctx.fillStyle = rgba(T.pointerEdge);
+      ctx.arc(0, PIN_Y, 2.6 * U, 0, TAU);
+      ctx.fillStyle = rgba(T.rimHi);
       ctx.fill();
+      ctx.lineWidth = 0.8 * U;
+      ctx.strokeStyle = rgba(T.rimShade);
+      ctx.stroke();
       ctx.restore();
     }
 
@@ -647,21 +757,23 @@
     }
 
     drawConfetti(ctx, dt) {
+      const shape = paw();
       for (const p of this.confetti) {
-        p.vy = Math.min(460, p.vy + 150 * dt);
-        p.vx *= 1 - 0.6 * dt;
-        p.phase += p.sway * dt;
-        p.x += (p.vx + Math.sin(p.phase) * 45) * dt;
+        p.life += dt;
+        p.vy += 900 * dt;
+        p.vx *= 1 - 1.2 * dt;
+        p.vy *= 1 - 0.6 * dt;
+        p.x += p.vx * dt;
         p.y += p.vy * dt;
         p.rot += p.vr * dt;
-        ctx.setTransform(1, 0, 0, 1, p.x, p.y);
+        const fade = Math.min(1, (p.ttl - p.life) / 0.6);
+        ctx.setTransform(p.size, 0, 0, p.size, p.x, p.y);
         ctx.rotate(p.rot);
-        ctx.scale(1, Math.cos(p.phase * 2));
-        ctx.fillStyle = rgba(p.color);
-        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        ctx.fillStyle = rgba(p.color, Math.max(0, fade));
+        ctx.fill(shape);
       }
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      this.confetti = this.confetti.filter((p) => p.y < H + 40);
+      this.confetti = this.confetti.filter((p) => p.life < p.ttl && p.y < H + 40);
     }
 
     /* ---------- text ---------- */
