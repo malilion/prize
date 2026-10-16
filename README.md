@@ -126,3 +126,11 @@ node --test tests/core.test.mjs
 ```
 
 更新任一程式或樣式檔時，記得在 `sw.js` 增加 `CACHE_NAME` 版本，並把新檔案加入 `SHELL` 清單。
+
+## License
+
+[Apache License 2.0](LICENSE). See [NOTICE](NOTICE).
+
+## 授權
+
+採用 [Apache License 2.0](LICENSE)，另見 [NOTICE](NOTICE)。
